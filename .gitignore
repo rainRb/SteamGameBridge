@@ -1,0 +1,7 @@
+**/bin/
+**/obj/
+assets/*.exe
+artifacts/
+research/
+test-artifacts/
+*.log

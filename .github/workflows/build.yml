@@ -1,0 +1,103 @@
+name: Windows build and experimental release
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Build, test and package Windows x64 variants
+        shell: pwsh
+        env:
+          BUILD_REF_TYPE: ${{ github.ref_type }}
+          BUILD_REF_NAME: ${{ github.ref_name }}
+        run: |
+          if ($env:BUILD_REF_TYPE -eq 'tag' -and $env:BUILD_REF_NAME.StartsWith('v')) {
+            ./Build.ps1 -All -RunTests -Package -Version $env:BUILD_REF_NAME.Substring(1)
+          } else {
+            ./Build.ps1 -All -RunTests -Package
+          }
+      - name: Upload experimental packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: ZZZSteamBridge-windows-x64
+          path: |
+            artifacts/packages/*.zip
+            artifacts/packages/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
+      - name: Upload build and fixture test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: isolated-test-results
+          path: |
+            artifacts/test-results/*.txt
+            artifacts/test-fixtures/**/launcher-test-results.json
+          if-no-files-found: warn
+          retention-days: 30
+
+  prerelease:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Download tested packages
+        uses: actions/download-artifact@v4
+        with:
+          name: ZZZSteamBridge-windows-x64
+          path: packages
+      - name: Create or update experimental GitHub prerelease
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = $env:RELEASE_TAG
+          $assets = @(Get-ChildItem -LiteralPath packages -File | Where-Object { $_.Name.EndsWith('.zip') -or $_.Name -eq 'SHA256SUMS.txt' } | ForEach-Object FullName)
+          if ($assets.Count -ne 3) { throw 'Expected the two tested ZIP variants and SHA256SUMS.txt.' }
+          $checksums = @(Get-Content -LiteralPath packages/SHA256SUMS.txt)
+          if ($checksums.Count -ne 2) { throw 'Expected one checksum for each ZIP variant.' }
+          foreach ($line in $checksums) {
+            if ($line -notmatch '^([a-f0-9]{64})  (ZZZSteamBridge-[A-Za-z0-9.-]+\.zip)$') { throw 'Invalid checksum file format.' }
+            $expected = $Matches[1]
+            $package = Join-Path packages $Matches[2]
+            if ((Get-FileHash -LiteralPath $package -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expected) { throw 'A downloaded package failed SHA256 verification.' }
+          }
+          if (-not (Test-Path -LiteralPath docs/ReleaseNotes.md -PathType Leaf)) { throw 'Release notes are missing.' }
+          $existing = & gh release view $tag --json isPrerelease 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            if (-not ($existing | ConvertFrom-Json).isPrerelease) { throw 'An existing stable release will not be changed or overwritten.' }
+            & gh release edit $tag --prerelease --title "ZZZSteamBridge $tag (experimental)" --notes-file docs/ReleaseNotes.md
+            if ($LASTEXITCODE -ne 0) { throw 'Could not update the prerelease notes.' }
+            & gh release upload $tag @assets --clobber
+          } else {
+            & gh release create $tag @assets --verify-tag --prerelease --title "ZZZSteamBridge $tag (experimental)" --notes-file docs/ReleaseNotes.md
+          }
+          if ($LASTEXITCODE -ne 0) { throw 'GitHub prerelease publication failed.' }

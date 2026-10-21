@@ -1,0 +1,1 @@
+{"status":"success","data":{"4162040":{"common":{"name":"Zenless Zone Zero"},"config":{"installdir":"Zenless Zone Zero","launch":{"0":{"config":{"oslist":"windows"},"executable":"HYP.exe"}}},"depots":{"4162041":{"config":{"osarch":"64","oslist":"windows"},"manifests":{"public":{"gid":"354184710998767755","size":"84531879877"}}},"branches":{"public":{"buildid":"25596035"}}}}}}
