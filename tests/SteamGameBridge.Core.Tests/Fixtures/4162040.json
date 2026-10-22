@@ -1,0 +1,45 @@
+{
+  "status": "success",
+  "source": "https://api.steamcmd.net/v1/info/4162040",
+  "captured_at": "2026-10-23",
+  "data": {
+    "4162040": {
+      "common": {
+        "name": "Zenless Zone Zero"
+      },
+      "config": {
+        "installdir": "Zenless Zone Zero",
+        "launch": {
+          "0": {
+            "config": {
+              "oslist": "windows"
+            },
+            "executable": "HYP.exe"
+          }
+        }
+      },
+      "depots": {
+        "branches": {
+          "public": {
+            "buildid": "25596035",
+            "timebuildupdated": "1790663396",
+            "timeupdated": "1792537559"
+          }
+        },
+        "4162041": {
+          "manifests": {
+            "public": {
+              "download": "82305635760",
+              "gid": "354184710998767755",
+              "size": "84531879877"
+            }
+          },
+          "config": {
+            "osarch": "64",
+            "oslist": "windows"
+          }
+        }
+      }
+    }
+  }
+}

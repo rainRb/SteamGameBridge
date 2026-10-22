@@ -1,0 +1,46 @@
+{
+  "status": "success",
+  "source": "https://api.steamcmd.net/v1/info/4732690",
+  "captured_at": "2026-10-23",
+  "data": {
+    "4732690": {
+      "common": {
+        "name": "Arknights: Endfield"
+      },
+      "config": {
+        "installdir": "Arknights Endfield",
+        "launch": {
+          "0": {
+            "executable": "Endfield.exe"
+          },
+          "1": {
+            "arguments": "-force-d3d11",
+            "description": "DirectX 11",
+            "description_loc": {
+              "english": "DirectX 11"
+            },
+            "executable": "Endfield.exe"
+          }
+        }
+      },
+      "depots": {
+        "branches": {
+          "public": {
+            "buildid": "25728898",
+            "timebuildupdated": "1791209132",
+            "timeupdated": "1792016149"
+          }
+        },
+        "4732691": {
+          "manifests": {
+            "public": {
+              "download": "61998877424",
+              "gid": "3024011413268238677",
+              "size": "68276329686"
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,6 +1,6 @@
 using System.Globalization;
 
-namespace ZZZSteamBridge.Core;
+namespace SteamGameBridge.Core;
 
 public static class SteamDiscovery
 {

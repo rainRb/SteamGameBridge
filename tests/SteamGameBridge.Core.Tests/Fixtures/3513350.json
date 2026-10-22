@@ -1,0 +1,43 @@
+{
+  "status": "success",
+  "source": "https://api.steamcmd.net/v1/info/3513350",
+  "captured_at": "2026-10-23",
+  "data": {
+    "3513350": {
+      "common": {
+        "name": "Wuthering Waves"
+      },
+      "config": {
+        "installdir": "Wuthering Waves",
+        "launch": {
+          "0": {
+            "arguments": "-krqlv=hd",
+            "config": {
+              "osarch": "64",
+              "oslist": "windows"
+            },
+            "executable": "Wuthering Waves.exe"
+          }
+        }
+      },
+      "depots": {
+        "branches": {
+          "public": {
+            "buildid": "25950293",
+            "timebuildupdated": "1792034621",
+            "timeupdated": "1792146235"
+          }
+        },
+        "3513351": {
+          "manifests": {
+            "public": {
+              "download": "77917279584",
+              "gid": "7436983586168136855",
+              "size": "85881465060"
+            }
+          }
+        }
+      }
+    }
+  }
+}

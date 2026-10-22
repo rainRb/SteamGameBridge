@@ -1,40 +1,35 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
-namespace ZZZSteamBridge.Core;
+namespace SteamGameBridge.Core;
 
 public sealed class BridgeException(string message) : Exception(message);
 
-public sealed record SteamAppMetadata(string Name, string InstallDirectory, string Executable, string BuildId, DateTimeOffset FetchedAt)
+public sealed record SteamAppMetadata(string AppId, string Name, string InstallDirectory, string Executable, string BuildId, DateTimeOffset FetchedAt)
 {
     public IReadOnlyList<SteamDepot> Depots { get; init; } = [];
-    public const string AppId = "4162040";
+    public string LaunchId { get; init; } = "";
+    public IReadOnlyList<SteamLaunchEntry> LaunchEntries { get; init; } = [];
 
-    public static SteamAppMetadata ParseApiSteamCmdJson(string json)
+    public static SteamAppMetadata ParseApiSteamCmdJson(string json, string appId, string? launchId = null)
     {
         try
         {
+            ValidateAppId(appId);
             using var doc = JsonDocument.Parse(json, new JsonDocumentOptions { MaxDepth = 64 });
             var root = doc.RootElement;
             if (!root.GetProperty("status").GetString()!.Equals("success", StringComparison.OrdinalIgnoreCase))
                 throw new BridgeException("Steam 元数据接口未返回成功结果。");
-            var app = root.GetProperty("data").GetProperty(AppId);
+            var app = root.GetProperty("data").GetProperty(appId);
             var name = app.GetProperty("common").GetProperty("name").GetString()!;
-            if (!name.Contains("Zenless Zone Zero", StringComparison.OrdinalIgnoreCase))
-                throw new BridgeException("元数据中的游戏名称与绝区零不符。");
+            if (string.IsNullOrWhiteSpace(name) || name.Length > 512 || name.Any(char.IsControl)) throw new BridgeException("Steam 游戏名称无效。");
             var config = app.GetProperty("config");
             var install = config.GetProperty("installdir").GetString()!;
             ValidateRelativePath(install, false);
-            var launches = config.GetProperty("launch").EnumerateObject()
-                .Select(x => x.Value)
-                .Where(x => x.ValueKind == JsonValueKind.Object && x.TryGetProperty("executable", out _))
-                .Where(x => !x.TryGetProperty("config", out var c) || !c.TryGetProperty("oslist", out var os) || os.GetString()!.Split(',').Contains("windows"))
-                .Where(x => !x.TryGetProperty("type", out var t) || t.GetString() is "default" or "none")
-                .ToArray();
-            if (launches.Length != 1) throw new BridgeException("Windows 默认启动项不唯一，拒绝猜测 Steam 的启动程序。");
-            var executable = launches[0].GetProperty("executable").GetString()!.Replace('/', '\\');
-            ValidateRelativePath(executable, true);
-            if (!executable.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) throw new BridgeException("Steam 启动程序不是 EXE。");
+            var launches = ReadLaunchEntries(app);
+            var selected = launchId is null ? (launches.Count == 1 ? launches[0] : throw new BridgeException("存在多个 Windows 启动入口，请明确选择。"))
+                : launches.SingleOrDefault(x => x.Id == launchId) ?? throw new BridgeException("选定的 Windows 启动入口已不存在。");
+            var executable = selected.Executable;
             var build = app.GetProperty("depots").GetProperty("branches").GetProperty("public").GetProperty("buildid").GetString()!;
             if (!PositiveId(build)) throw new BridgeException("Steam 公共分支版本号无效。");
             var depots = new List<SteamDepot>();
@@ -49,11 +44,44 @@ public sealed record SteamAppMetadata(string Name, string InstallDirectory, stri
                 depots.Add(new(d.Name, gid, size));
             }
             if (depots.Count == 0) throw new BridgeException("Steam 公共 depot 清单为空，拒绝使用猜测的安装元数据。");
-            return new(name, install, executable, build, DateTimeOffset.UtcNow) { Depots = depots };
+            return new(appId, name, install, executable, build, DateTimeOffset.UtcNow) { Depots = depots, LaunchId = selected.Id, LaunchEntries = launches };
         }
         catch (BridgeException) { throw; }
         catch (Exception ex) when (ex is JsonException or KeyNotFoundException or InvalidOperationException or NullReferenceException or ArgumentException)
         { throw new BridgeException("Steam 元数据缺失或格式无效，未更改任何配置。"); }
+    }
+
+    public static void ValidateAppId(string appId)
+    {
+        if (!uint.TryParse(appId, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var id) || id == 0 || id.ToString(System.Globalization.CultureInfo.InvariantCulture) != appId)
+            throw new BridgeException("Steam AppID 必须是有效的正整数。");
+    }
+
+    public static IReadOnlyList<SteamLaunchEntry> ReadLaunchChoices(string json, string appId)
+    {
+        ValidateAppId(appId);
+        try { using var doc = JsonDocument.Parse(json); return ReadLaunchEntries(doc.RootElement.GetProperty("data").GetProperty(appId)); }
+        catch (Exception ex) when (ex is JsonException or KeyNotFoundException or InvalidOperationException or NullReferenceException)
+        { throw new BridgeException("Steam 元数据缺少 Windows 启动信息。"); }
+    }
+
+    private static IReadOnlyList<SteamLaunchEntry> ReadLaunchEntries(JsonElement app)
+    {
+        var result = new List<SteamLaunchEntry>();
+        foreach (var item in app.GetProperty("config").GetProperty("launch").EnumerateObject())
+        {
+            var x = item.Value;
+            if (x.ValueKind != JsonValueKind.Object || !x.TryGetProperty("executable", out var exe)) continue;
+            if (x.TryGetProperty("config", out var c) && c.TryGetProperty("oslist", out var os) && !os.GetString()!.Split(',').Any(v => v.Trim().Equals("windows", StringComparison.OrdinalIgnoreCase))) continue;
+            string executable = exe.GetString()!.Replace('/', '\\');
+            ValidateRelativePath(executable, true);
+            if (!executable.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) continue;
+            var description = x.TryGetProperty("description", out var desc) ? desc.GetString() : null;
+            if (result.Any(e => e.Id == item.Name)) throw new BridgeException("Steam 启动入口编号重复。");
+            result.Add(new(item.Name, description ?? executable, executable));
+        }
+        if (result.Count == 0) throw new BridgeException("没有可用的 Windows EXE 启动入口。");
+        return result;
     }
 
     internal static bool PositiveId(string value) => value.Length is > 0 and <= 20 && value.All(char.IsAsciiDigit) && ulong.TryParse(value, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var id) && id > 0;
@@ -71,12 +99,25 @@ public sealed record SteamAppMetadata(string Name, string InstallDirectory, stri
 public sealed class BridgeServiceOptions
 {
     public required string StateDirectory { get; init; }
+    public required string SteamRoot { get; init; }
+    public required string AppId { get; init; }
     public Func<bool> IsBusy { get; init; } = () => false;
     public required IReadOnlyList<string> RegisteredLibraries { get; init; }
 }
 
 public sealed record SteamDepot(string DepotId, string ManifestId, string Size);
-public sealed record SetupRequest(string SteamRoot, string LibraryRoot, string AccountConfigPath, string NativeExe, string HelperExe, string? PlaceholderExe = null, string GameArguments = "");
+public sealed record SetupRequest(string SteamRoot, string LibraryRoot, string AccountConfigPath, string NativeExe, string HelperExe, string? PlaceholderExe = null, string GameArguments = "")
+{
+    public string PresetId { get; init; } = "custom";
+    public LaunchMode LaunchMode { get; init; }
+    public string LauncherExe { get; init; } = "";
+    public string LauncherArguments { get; init; } = "";
+    public int WaitSeconds { get; init; } = 180;
+    public StarwardIntegrationOptions? Starward { get; init; }
+    public ExistingLaunchOptionsAction ExistingOptionsAction { get; init; } = ExistingLaunchOptionsAction.Keep;
+    public string? ExpectedOriginalLaunchOptions { get; init; }
+    public bool OriginalOptionsReviewed { get; init; }
+}
 public sealed record SetupPreview(string ManifestPath, string PlaceholderDirectory, string LaunchOptions, string MetadataBuildId, IReadOnlyList<string> Warnings);
 public sealed record OperationResult(string ReceiptId, string Message, SetupPreview? Preview = null);
 public sealed record Inspection(bool Installed, string? ReceiptId, string Status, IReadOnlyList<string> Conflicts, SetupPreview? Preview);

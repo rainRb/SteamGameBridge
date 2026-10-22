@@ -1,0 +1,47 @@
+{
+  "status": "success",
+  "source": "https://api.steamcmd.net/v1/info/1671200",
+  "captured_at": "2026-10-23",
+  "data": {
+    "1671200": {
+      "common": {
+        "name": "HonkaiImpact 3rd"
+      },
+      "config": {
+        "installdir": "HonkaiImpact3rd",
+        "launch": {
+          "0": {
+            "config": {
+              "osarch": "64",
+              "oslist": "windows"
+            },
+            "executable": "BH3.exe",
+            "type": "default"
+          }
+        }
+      },
+      "depots": {
+        "branches": {
+          "public": {
+            "buildid": "25924094",
+            "timebuildupdated": "1791947623",
+            "timeupdated": "1792642132"
+          }
+        },
+        "1671201": {
+          "manifests": {
+            "public": {
+              "download": "30104106256",
+              "gid": "1764851353229034333",
+              "size": "36693080435"
+            }
+          },
+          "config": {
+            "osarch": "64",
+            "oslist": "windows"
+          }
+        }
+      }
+    }
+  }
+}
