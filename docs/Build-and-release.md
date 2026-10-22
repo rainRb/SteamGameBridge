@@ -1,25 +1,17 @@
-# Build and release
+# 构建、测试与 CI
 
-Use Windows x64 and the stable .NET 10 SDK selected by `global.json`. The script uses that SDK's Roslyn compiler and Windows .NET Framework reference assemblies to generate `assets/SteamPlaceholder.exe` from `src/SteamPlaceholder/Program.cs`. The generated placeholder is embedded in the main app and is intentionally not committed. No game assets or Steam installation are needed to build.
-
-From a clean checkout in PowerShell:
+目标：Windows x64、.NET 10。SDK 由 global.json 选择。主界面采用 Windows Forms，Core 使用 BCL；没有第三方 NuGet 库依赖。占位程序由 SDK 的 C# 编译器配合 Windows .NET Framework 引用程序集从源码生成，不分发游戏文件。
 
 ```powershell
-./Build.ps1                         # Small single executable
-./Build.ps1 -SelfContained          # Single executable including the runtime
-./Build.ps1 -All -RunTests -Package # Both variants, fixture tests, ZIPs and hashes
+.\Build.ps1
+.\Build.ps1 -SelfContained
+.\Build.ps1 -All -RunTests -Package
 ```
 
-`-RunTests` builds the isolated fake game, runs Core fixtures and tests every published launcher variant against that fake process. It checks arguments, Steam-context inheritance, process lifetime and exit status without starting real Steam or a real game, or editing their configuration. It does not validate actual Steam recognition, playtime, friends status, Overlay, login, anti-cheat acceptance or update persistence. Test counts are reported by the suites rather than used as fixed pass criteria, so adding meaningful tests does not require editing the build script.
+Build.ps1 构建轻量版及自包含单文件，测试实际发布 EXE，再按白名单打包 README、LICENSE、docs 和 BUILDINFO。自包含包另附实际使用的 .NET Runtime/Desktop 许可证与第三方声明。SHA256SUMS.txt 对应本次两个 ZIP；不包含 PDB、私有配置或测试夹具。脚本显式使用 UTF-8 读取 JSON，兼容 Windows PowerShell 5.1。
 
-Executables are `artifacts/small/ZZZSteamBridge.exe` and `artifacts/self-contained/ZZZSteamBridge.exe`. Packages are in `artifacts/packages/`; `SHA256SUMS.txt` covers both ZIPs. Packages include the executable, README, MIT license and documentation. The self-contained package also includes the .NET runtime and Windows Desktop redistribution licenses and third-party notices under `third-party/`, selected from the versions actually resolved during publish. PDB files and raw test logs are excluded. Staging and test files remain in ignored `artifacts/` directories. The script stages known deliverables rather than arbitrary files remaining from earlier builds and does not recursively clean user directories. The small variant requires the .NET 10 Desktop Runtime x64 on the target computer. Outputs are unsigned experimental builds.
+本地构建在 artifacts/test-results 保存证据。可用 `-OutputDirectory artifacts/verified` 选择项目内的新输出目录，避免覆盖正在使用的演示程序。网络不可用时 NuGet 漏洞数据查询可能产生 NU1900 警告；这不代表漏洞检查已通过，也不能代替构建或测试结果。没有为绕过该查询而关闭证书校验、改代理或关闭审计。
 
-An explicit prerelease version can be supplied:
+GitHub Actions 对分支 push、PR 和手动运行进行构建、测试和打包，上传两个版本及测试日志作为构建产物。正常源码提交不触发 Release。历史工作流的 v* 标签预发行通路保留，但本次 0.2.0-dev 任务不创建新标签，不运行新 Release 发布。
 
-```powershell
-./Build.ps1 -All -RunTests -Package -Version 0.1.0-preview.1
-```
-
-GitHub Actions runs the same build, fixture tests and packaging on pushes, pull requests and manual runs, then uploads ZIPs/checksums and test logs as workflow artifacts. A pushed `v*` tag also creates an **experimental GitHub prerelease**, never a stable release, after the build passes. For example, `v0.1.0-preview.1` produces version `0.1.0-preview.1`. Creating and pushing a tag is an external publication action and should happen only when the repository owner intends to publish that version. The workflow uses only GitHub's automatic `GITHUB_TOKEN`, passed as the `GH_TOKEN` environment variable to `gh`; no personal token belongs in source files. Re-running a tag workflow can replace assets only on an existing prerelease; an existing stable release is left unchanged.
-
-The workflow is `.github/workflows/build.yml`. Release text comes from `docs/ReleaseNotes.md`; update it before tagging a new version. The release contains two ZIP variants and SHA256 checksums; GitHub supplies source ZIP/tar archives for the tag automatically. A passed workflow demonstrates fixture/build coverage only. Keep the prerelease designation until real Steam scenarios have been explicitly verified and documented.
+small 版本需要 .NET 10 Desktop Runtime x64；self-contained 版本包含运行时。两个版本功能相同。更换稳定启动组件前先恢复该游戏接入，再用新程序重新接入。

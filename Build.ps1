@@ -4,7 +4,8 @@ param(
     [switch]$All,
     [switch]$RunTests,
     [switch]$Package,
-    [string]$Version
+    [string]$Version,
+    [string]$OutputDirectory = 'artifacts'
 )
 
 Set-StrictMode -Version Latest
@@ -14,7 +15,9 @@ if ($All -and $SelfContained) { throw 'Use either -All or -SelfContained, not bo
 
 Push-Location -LiteralPath $PSScriptRoot
 try {
-    $artifactRoot = Join-Path $PSScriptRoot 'artifacts'
+    if ([IO.Path]::IsPathRooted($OutputDirectory)) { throw 'OutputDirectory must be relative to the checkout.' }
+    $artifactRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot $OutputDirectory))
+    if (-not $artifactRoot.StartsWith($PSScriptRoot.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'OutputDirectory must stay inside the checkout.' }
     $logRoot = Join-Path $artifactRoot 'test-results'
     New-Item -ItemType Directory -Force -Path $logRoot | Out-Null
     New-Item -ItemType Directory -Force -Path (Join-Path $PSScriptRoot 'assets') | Out-Null
@@ -39,7 +42,7 @@ try {
         $referenceRoot = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319'
     }
     $references = @('mscorlib.dll', 'System.dll', 'System.Drawing.dll', 'System.Windows.Forms.dll')
-    $compilerArgs = @($compiler, '/nologo', '/noconfig', '/nostdlib+', '/target:winexe', '/platform:anycpu', '/optimize+', '/deterministic+', '/langversion:5', '/codepage:65001', '/utf8output', "/pathmap:$PSScriptRoot=/_/ZZZSteamBridge", '/out:assets\SteamPlaceholder.exe')
+    $compilerArgs = @($compiler, '/nologo', '/noconfig', '/nostdlib+', '/target:winexe', '/platform:anycpu', '/optimize+', '/deterministic+', '/langversion:5', '/codepage:65001', '/utf8output', "/pathmap:$PSScriptRoot=/_/SteamGameBridge", '/out:assets\SteamPlaceholder.exe')
     foreach ($reference in $references) {
         $referencePath = Join-Path $referenceRoot $reference
         if (-not (Test-Path -LiteralPath $referencePath -PathType Leaf)) { throw "Missing Windows Framework reference: $reference" }
@@ -49,11 +52,11 @@ try {
     Invoke-DotNet -Arguments $compilerArgs -LogName 'placeholder-build.txt'
 
     if ([string]::IsNullOrWhiteSpace($Version)) {
-        [xml]$project = Get-Content -LiteralPath 'src\ZZZSteamBridge.App\ZZZSteamBridge.App.csproj' -Raw
+        [xml]$project = Get-Content -LiteralPath 'src\SteamGameBridge.App\SteamGameBridge.App.csproj' -Raw -Encoding UTF8
         $Version = [string]$project.Project.PropertyGroup.Version
     }
     if ($Version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$') {
-        throw 'Version must have three numeric parts and an optional prerelease suffix, for example 0.1.0-preview.1.'
+        throw 'Version must have three numeric parts and an optional prerelease suffix, for example 0.2.0-dev.'
     }
 
     $modes = @()
@@ -61,21 +64,21 @@ try {
     if ($All -or $SelfContained) { $modes += 'self-contained' }
     foreach ($mode in $modes) {
         $selfContainedValue = if ($mode -eq 'self-contained') { 'true' } else { 'false' }
-        $publishArgs = @('publish', 'src/ZZZSteamBridge.App/ZZZSteamBridge.App.csproj', '-c', 'Release', '-r', 'win-x64', '--self-contained', $selfContainedValue, '-p:PublishSingleFile=true', "-p:Version=$Version", '-p:ContinuousIntegrationBuild=true', '-o', (Join-Path $artifactRoot $mode), '--nologo')
+        $publishArgs = @('publish', 'src/SteamGameBridge.App/SteamGameBridge.App.csproj', '-c', 'Release', '-r', 'win-x64', '--self-contained', $selfContainedValue, '-p:PublishSingleFile=true', "-p:Version=$Version", '-p:ContinuousIntegrationBuild=true', '-o', (Join-Path $artifactRoot $mode), '--nologo')
         Invoke-DotNet -Arguments $publishArgs -LogName "publish-$mode.txt"
-        if (-not (Test-Path -LiteralPath (Join-Path $artifactRoot "$mode\ZZZSteamBridge.exe") -PathType Leaf)) { throw "Published executable missing for $mode." }
+        if (-not (Test-Path -LiteralPath (Join-Path $artifactRoot "$mode\SteamGameBridge.exe") -PathType Leaf)) { throw "Published executable missing for $mode." }
     }
 
     if ($RunTests) {
         # Fixtures remain beneath this checkout. No real Steam or game process
         # is started, and no live Steam or game configuration is modified.
-        Invoke-DotNet -Arguments @('run', '--project', 'tests/ZZZSteamBridge.Core.Tests/ZZZSteamBridge.Core.Tests.csproj', '-c', 'Release') -LogName 'core.txt'
-        Invoke-DotNet -Arguments @('build', 'tests/ZZZSteamBridge.FakeGame/ZZZSteamBridge.FakeGame.csproj', '-c', 'Release', '--nologo') -LogName 'fakegame-build.txt'
-        $fakeGame = Join-Path $PSScriptRoot 'tests\ZZZSteamBridge.FakeGame\bin\Release\net10.0\ZenlessZoneZero.exe'
+        Invoke-DotNet -Arguments @('run', '--project', 'tests/SteamGameBridge.Core.Tests/SteamGameBridge.Core.Tests.csproj', '-c', 'Release') -LogName 'core.txt'
+        Invoke-DotNet -Arguments @('build', 'tests/SteamGameBridge.FakeGame/SteamGameBridge.FakeGame.csproj', '-c', 'Release', '--nologo') -LogName 'fakegame-build.txt'
+        $fakeGame = Join-Path $PSScriptRoot 'tests\SteamGameBridge.FakeGame\bin\Release\net10.0\ZenlessZoneZero.exe'
         foreach ($mode in $modes) {
             $fixtureDirectory = Join-Path $artifactRoot "test-fixtures\$mode"
-            $publishedExe = Join-Path $artifactRoot "$mode\ZZZSteamBridge.exe"
-            Invoke-DotNet -Arguments @('run', '--project', 'tests/ZZZSteamBridge.Launcher.Tests/ZZZSteamBridge.Launcher.Tests.csproj', '-c', 'Release', '--', $fakeGame, $fixtureDirectory, $publishedExe) -LogName "launcher-$mode.txt"
+            $publishedExe = Join-Path $artifactRoot "$mode\SteamGameBridge.exe"
+            Invoke-DotNet -Arguments @('run', '--project', 'tests/SteamGameBridge.Launcher.Tests/SteamGameBridge.Launcher.Tests.csproj', '-c', 'Release', '--', $fakeGame, $fixtureDirectory, $publishedExe) -LogName "launcher-$mode.txt"
         }
     }
 
@@ -89,7 +92,7 @@ try {
             $stageName = "$Version-$mode-" + [guid]::NewGuid().ToString('N')
             $stage = Join-Path $artifactRoot "staging\$stageName"
             New-Item -ItemType Directory -Path $stage | Out-Null
-            Copy-Item -LiteralPath (Join-Path $artifactRoot "$mode\ZZZSteamBridge.exe") -Destination $stage
+            Copy-Item -LiteralPath (Join-Path $artifactRoot "$mode\SteamGameBridge.exe") -Destination $stage
             foreach ($document in @('README.md', 'LICENSE')) {
                 if (-not (Test-Path -LiteralPath $document -PathType Leaf)) { throw "Required package document missing: $document" }
                 Copy-Item -LiteralPath $document -Destination $stage
@@ -98,8 +101,8 @@ try {
             if ($mode -eq 'self-contained') {
                 # Read the actually resolved framework versions/package root,
                 # rather than guessing the SDK's current runtime patch level.
-                $runtimeConfig = Get-Content -LiteralPath 'src\ZZZSteamBridge.App\bin\Release\net10.0-windows\win-x64\ZZZSteamBridge.runtimeconfig.json' -Raw | ConvertFrom-Json
-                $restoreAssets = Get-Content -LiteralPath 'src\ZZZSteamBridge.App\obj\project.assets.json' -Raw | ConvertFrom-Json
+                $runtimeConfig = Get-Content -LiteralPath 'src\SteamGameBridge.App\bin\Release\net10.0-windows\win-x64\SteamGameBridge.runtimeconfig.json' -Raw -Encoding UTF8 | ConvertFrom-Json
+                $restoreAssets = Get-Content -LiteralPath 'src\SteamGameBridge.App\obj\project.assets.json' -Raw -Encoding UTF8 | ConvertFrom-Json
                 $packagesRoot = [string]$restoreAssets.project.restore.packagesPath
                 $coreVersion = @($runtimeConfig.runtimeOptions.includedFrameworks | Where-Object name -eq 'Microsoft.NETCore.App')[0].version
                 $desktopVersion = @($runtimeConfig.runtimeOptions.includedFrameworks | Where-Object name -eq 'Microsoft.WindowsDesktop.App')[0].version
@@ -118,7 +121,7 @@ try {
             }
             $buildInfo = @("Version: $Version", "Variant: $mode", 'Target: Windows x64', "SDK: $sdkVersion", 'Status: experimental prerelease', 'Actual Steam recognition, playtime, friends status and Overlay remain unverified.', 'The small variant requires .NET 10 Desktop Runtime x64; self-contained includes it.')
             [IO.File]::WriteAllLines((Join-Path $stage 'BUILDINFO.txt'), $buildInfo, [Text.UTF8Encoding]::new($false))
-            $archiveName = "ZZZSteamBridge-$Version-win-x64-$mode.zip"
+            $archiveName = "SteamGameBridge-$Version-win-x64-$mode.zip"
             $archive = Join-Path $packageRoot $archiveName
             Compress-Archive -LiteralPath @(Get-ChildItem -LiteralPath $stage -Force | ForEach-Object FullName) -DestinationPath $archive -CompressionLevel Optimal -Force
             $hash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()

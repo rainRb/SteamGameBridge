@@ -5,9 +5,9 @@
     <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <AssemblyName>ZZZSteamBridge</AssemblyName>
+    <AssemblyName>SteamGameBridge</AssemblyName>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <Version>0.1.0-preview.1</Version>
+    <Version>0.2.0-dev</Version>
     <PublishSingleFile>true</PublishSingleFile>
     <SelfContained>true</SelfContained>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
@@ -15,7 +15,7 @@
     <EnableCompressionInSingleFile Condition="'$(SelfContained)' == 'true'">true</EnableCompressionInSingleFile>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="../ZZZSteamBridge.Core/ZZZSteamBridge.Core.csproj" />
+    <ProjectReference Include="../SteamGameBridge.Core/SteamGameBridge.Core.csproj" />
     <EmbeddedResource Include="../../assets/SteamPlaceholder.exe" LogicalName="SteamPlaceholder.exe" />
   </ItemGroup>
 </Project>

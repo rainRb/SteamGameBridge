@@ -38,7 +38,7 @@ jobs:
       - name: Upload experimental packages
         uses: actions/upload-artifact@v4
         with:
-          name: ZZZSteamBridge-windows-x64
+          name: SteamGameBridge-windows-x64
           path: |
             artifacts/packages/*.zip
             artifacts/packages/SHA256SUMS.txt
@@ -69,7 +69,7 @@ jobs:
       - name: Download tested packages
         uses: actions/download-artifact@v4
         with:
-          name: ZZZSteamBridge-windows-x64
+          name: SteamGameBridge-windows-x64
           path: packages
       - name: Create or update experimental GitHub prerelease
         shell: pwsh
@@ -85,7 +85,7 @@ jobs:
           $checksums = @(Get-Content -LiteralPath packages/SHA256SUMS.txt)
           if ($checksums.Count -ne 2) { throw 'Expected one checksum for each ZIP variant.' }
           foreach ($line in $checksums) {
-            if ($line -notmatch '^([a-f0-9]{64})  (ZZZSteamBridge-[A-Za-z0-9.-]+\.zip)$') { throw 'Invalid checksum file format.' }
+            if ($line -notmatch '^([a-f0-9]{64})  (SteamGameBridge-[A-Za-z0-9.-]+\.zip)$') { throw 'Invalid checksum file format.' }
             $expected = $Matches[1]
             $package = Join-Path packages $Matches[2]
             if ((Get-FileHash -LiteralPath $package -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expected) { throw 'A downloaded package failed SHA256 verification.' }
@@ -94,10 +94,10 @@ jobs:
           $existing = & gh release view $tag --json isPrerelease 2>$null
           if ($LASTEXITCODE -eq 0) {
             if (-not ($existing | ConvertFrom-Json).isPrerelease) { throw 'An existing stable release will not be changed or overwritten.' }
-            & gh release edit $tag --prerelease --title "ZZZSteamBridge $tag (experimental)" --notes-file docs/ReleaseNotes.md
+            & gh release edit $tag --prerelease --title "SteamGameBridge $tag (experimental)" --notes-file docs/ReleaseNotes.md
             if ($LASTEXITCODE -ne 0) { throw 'Could not update the prerelease notes.' }
             & gh release upload $tag @assets --clobber
           } else {
-            & gh release create $tag @assets --verify-tag --prerelease --title "ZZZSteamBridge $tag (experimental)" --notes-file docs/ReleaseNotes.md
+            & gh release create $tag @assets --verify-tag --prerelease --title "SteamGameBridge $tag (experimental)" --notes-file docs/ReleaseNotes.md
           }
           if ($LASTEXITCODE -ne 0) { throw 'GitHub prerelease publication failed.' }

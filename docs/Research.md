@@ -1,59 +1,33 @@
-# 绝区零国服 Steam 接入：依据与验证边界
+# 设计依据与实现边界
 
-核查日期：2026-10-21（Asia/Shanghai）。本工具是独立项目，不修改 Starward，也不添加“非 Steam 游戏”快捷方式。目标是由 Steam 正式 AppID `4162040` 的启动选项调用现有国服客户端。
+核查更新：2026-10-23。SteamGameBridge 是独立 .NET 10 Windows Forms 工具，Core 使用 BCL；没有修改 Starward 工程、安装目录、配置或数据库。实现多游戏 ACF/VDF 管理、正常进程创建和只读进程查询，源码为 MIT。
 
-## 已核实的公开资料
+## 来源与许可证
 
-- [Steam 正式商店页](https://store.steampowered.com/app/4162040/)确认 `4162040` 对应 Zenless Zone Zero；页面列出 HoYoverse 第三方账号及 HoYoKProtect 内核反作弊。商店条目不证明国服客户端获官方支持，也不证明本方案能在当前 Steam 客户端统计时长。
-- [Better Endfield 官方仓库](https://github.com/Dr-hydra/Better-Endfield)于本次 GitHub API 核查时的 `main` 为 `1038af190572511e64fe42053f74fb7d19931771`；[最新正式发布 v4.0.8](https://github.com/Dr-hydra/Better-Endfield/releases/tag/v4.0.8)发布于 2026-10-19。其 [LICENSE](https://github.com/Dr-hydra/Better-Endfield/blob/1038af190572511e64fe42053f74fb7d19931771/LICENSE)为 AGPL-3.0。本工具仅参考公开行为和资料，独立实现，没有复制其源代码、注入器或游戏内模块。
-- [Better Endfield 桌面工程文件](https://github.com/Dr-hydra/Better-Endfield/blob/1038af190572511e64fe42053f74fb7d19931771/ui/BetterEndfieldNext.UI/BetterEndfieldNext.UI.csproj)显示 .NET 9、WinUI 3、Windows x64 自包含桌面程序；仓库另外包含原生 C++ 组件及 Android 功能。它是综合游戏增强工具，不能将整套行为等同于普通启动包装器。
-- [Better Endfield Steam 功能说明](https://github.com/Dr-hydra/Better-Endfield/blob/1038af190572511e64fe42053f74fb7d19931771/docs/host/STEAM_CN_LAUNCH.md)描述了安装 ACF、独立占位目录、启动选项、原启动选项备份及移除恢复。它明确要求已正常入库，并指出 `AutoUpdateBehavior=1` 不能保证 Steam 永不下载；验证或更新仍可能下载国际服文件。
-- [Better Endfield 4.0.6 发布记录](https://github.com/Dr-hydra/Better-Endfield/blob/1038af190572511e64fe42053f74fb7d19931771/docs/workspace/releases/4.0.6/RELEASE_4_0_6.md)说明其链式启动 Overlay 修复向挂起的游戏子进程注入 Steam Overlay。本工具不实现这一机制，因此不能承诺复制该修复效果。
-- [Valve Steam Overlay 文档](https://partner.steamgames.com/doc/features/overlay)说明 Steam 通常会自动向经 Steam 启动的游戏接入 Overlay，并要求从 Steam 客户端启动。本工具采用正常进程创建和等待，保留 Steam 启动上下文；实际国服能否显示 Shift+Tab 必须单独验收。
+- 正式 Steam 商店页：[终末地 4732690](https://store.steampowered.com/app/4732690/)、[绝区零 4162040](https://store.steampowered.com/app/4162040/)、[鸣潮 3513350](https://store.steampowered.com/app/3513350/)、[崩坏3 1671200](https://store.steampowered.com/app/1671200/)。AppID 预设只提供默认值，不授予许可，不构成本地国服受到 Steam 官方支持的证明。
+- [Better Endfield 官方仓库](https://github.com/Dr-hydra/Better-Endfield)，此前核对源码提交 `1038af190572511e64fe42053f74fb7d19931771` 的 [LICENSE](https://github.com/Dr-hydra/Better-Endfield/blob/1038af190572511e64fe42053f74fb7d19931771/LICENSE) 为 AGPL-3.0。该项目包含 .NET/WinUI 桌面界面和原生组件；本项目仅独立参考公开行为，没有复制其源码或分发注入模块。
+- [Better Endfield Steam 功能说明](https://github.com/Dr-hydra/Better-Endfield/blob/1038af190572511e64fe42053f74fb7d19931771/docs/host/STEAM_CN_LAUNCH.md)说明安装 ACF、占位目录、启动项和恢复，并明确 `AutoUpdateBehavior=1` 无法保证 Steam 此后永不下载。
+- [Better Endfield Overlay 链式启动修复说明](https://github.com/Dr-hydra/Better-Endfield/blob/1038af190572511e64fe42053f74fb7d19931771/docs/workspace/releases/4.0.6/RELEASE_4_0_6.md)涉及进程注入。本项目不采用该实现，因此不承诺相同 Overlay 效果。
+- [Valve Steam Overlay 文档](https://partner.steamgames.com/doc/features/overlay)提供正常 Steam 启动的依据，实际各游戏是否可用需单独实测。
+- [Starward 官方仓库](https://github.com/Scighost/Starward)。本次重新读取了 [UrlProtocolService.cs](https://github.com/Scighost/Starward/blob/main/src/Starward/Features/UrlProtocol/UrlProtocolService.cs)：公开 `starward://playtime/<biz>?pid=...` 协议接受真实 PID，然后交给其自身的计时服务。[PlayTimeRecordService.cs](https://github.com/Scighost/Starward/blob/main/src/Starward/Features/PlayTime/PlayTimeRecordService.cs)负责对应进程和 PID 去重。我们仅调用已有协议，不复制或分发 Starward 实现。
+- [Snap Hutao Remastered 的联动处理器](https://github.com/SnapHutaoRemasteringProject/Snap.Hutao.Remastered/blob/7a9df50ea688ad9ae9740ff286e0457ee3cb27af/src/Snap.Hutao.Remastered/Snap.Hutao.Remastered/Service/Game/Launching/Handler/LaunchExecutionStarwardPlayTimeStatisticsHandler.cs)采用游戏已运行后查询 Starward 协议并通知的流程，文件头标注 MIT。本项目独立采用这一调用顺序，并通过现有 PID 查询参数明确交接实际游戏进程，不通过 Starward 再启动游戏。
 
-## 客户端发现与权限依据
+公开第三方 Steam 元数据来自 api.steamcmd.net，可导入同格式 JSON。必须包含所选 AppID 的实际名称、安装目录、Windows EXE、公共 BuildID 和 Depot Manifest。缺失或异常时拒绝接入，不伪造版本号或下载状态来源。
 
-自动发现读取官方启动器登记位置 `HKCU\Software\miHoYo\HYP\1_1\nap_cn` 的 `GameInstallPath`，再定位 `ZenlessZoneZero.exe`。启动时要求相邻 `config.ini` 中存在 `game_biz=nap_cn`。发布包不预置任何使用者的磁盘路径、账号或游戏版本。
+## 本次实现
 
-检查过的国服客户端执行级别清单包含 `requestedExecutionLevel level="requireAdministrator"`。因此，从普通权限 Steam 创建这类进程可能返回 Windows 错误 740；本工具报告该错误，由用户完全退出 Steam 后，通过正常 UAC 以管理员身份重新打开 Steam。工具不修改 Steam 兼容性或系统权限设置。权限满足也不能代替 Overlay 实测。
+1. 本地身份、Steam AppID 和 Starward biz 分离。一个 Steam 安装/AppID 使用唯一活动记录，与游戏库和账号选择分开校验。
+2. 只在 Steam 与对应游戏退出后写配置；跨进程的 Steam 安装锁串行保护共享 VDF，修改精确到所选 AppID 的 LaunchOptions。
+3. 先保存原配置及恢复日志，再写隔离占位文件和 ACF。拒绝已存在的清单、目标目录、下载目录、未知文件、重解析路径和与本地游戏重叠的写入位置。
+4. 三种旧启动项选择均经过原值和最终参数预览。原命令的 EXE/链/Steam 占位符不能自动当作纯游戏参数。
+5. 直接启动正常等待实际游戏；官方启动器和包装器等待完整路径、创建时间和会话均符合的进程。只读查询句柄用于等待和退出码，不做注入、挂起或内存写入。
+6. `%command%` 仅在用户明确填写 `{steamCommand}` 时转交选定启动器或包装器；直接游戏不执行它，不混入国际服参数。
+7. 游戏确认后尝试通知 Starward，协议或手动 EXE 失效不结束游戏。发送无记录成功回执；本地状态不会虚报 Starward 已记录。
+8. 修复仅管理自有内容；恢复只改目标启动项、只删除归属仍可确认的文件。其他游戏和未知内容保留。元数据变更、权限问题或外部冲突清楚报告。
+9. 新目录 SteamGameBridge 不迁移旧工具数据。升级前先恢复旧接入，再重新接入。
 
-这些只读检查不能证明真实游戏启动、登录或 Steam 计时已通过；本次验证没有启动真实游戏、登录账号、修改真实 Steam 配置或写入游戏目录。
+## 需要真实验收的边界
 
-## 独立实现的设计要求
+Steam 安装清单和继承的 AppID 环境不能证明 Steam 服务端累计时长、好友状态或 Overlay 成功。Starward 协议发送成功不能证明它已在数据库完成记录。假进程可验证路径和 PID 交接，不能替代内核反作弊、正常 UAC、官方启动器或真实更新兼容性。
 
-1. Steam 账号先通过商店正常获取此免费游戏的许可。ACF 和 `steam_appid.txt` 都不能授予账号许可。
-2. 使用独立 Steam 占位目录，与原国服目录完全分离。国服 EXE、数据、反作弊文件及更新配置不改动，国服更新继续由官方启动器处理。
-3. 只在 Steam 完全退出后应用或恢复；只修改所选账号、所选 AppID 的 `LaunchOptions`，保留其他账号、游戏和未知字段。检测到外部改动时停止，避免覆盖用户修改。
-4. 每次接入先保存原值和文件备份；持有可识别的归属记录。恢复时仅删除本工具明确创建且仍匹配记录的内容，遇到未知文件、目录链接或其他安装应拒绝清理。
-5. 安装目录、启动 EXE、BuildID 和 Depot Manifest 来源必须可追溯。第三方 Steam 元数据接口是获取公开元数据的途径，不是 Valve 官方保证；缓存必须带来源和时间。元数据缺失或异常时停止，不填猜测值。
-6. Steam 原始 `%command%` 只用于接收和诊断，不执行，也不混入国服参数。用户选择的国服 EXE 独立保存并再次核验。
-7. 当前包装器仅等待自己直接启动的游戏进程结束，不以同名进程长期维持运行；游戏自行脱离或重启进程的场景尚未验证，也未实现后继进程接管。
-8. 提权只通过正常 Windows UAC 流程。无法创建进程并收到需要提权错误时，明确报告，再由用户决定正常提权；不静默改 Steam 兼容性、关闭 UAC 或修改反作弊设置。
-9. 修复动作只恢复本工具管理的清单和启动选项，在 Steam 退出后进行。发布新版本时保留稳定安装路径及状态目录；发现 Steam 资源已下载或未知配置变更时应停止，不能递归清理后宣称自修复成功。
-
-上述是本工具的实现与审查准则，不代表每项真实游戏行为已经完成验收；实际实现及检查结果以随包测试报告为准。
-
-## “零下载”的准确范围
-
-本工具不请求、不安装、不下载 Steam 国际服游戏资源；接入可以在未下载这些资源的前提下完成。Steam、游戏许可和公开 App 元数据仍然需要存在。
-
-无法在保持 Steam 正常联网和更新能力的同时，用本地 ACF 保证它此后永远不下载任何国际服内容。Steam 可能重写清单、要求更新或校验。发现 Steam 出现“安装／更新／验证”或下载队列时，应立即停止此次验证并暂停该任务，不点击开始下载；退出 Steam 后重新检查接入配置。把自动更新设为“仅启动时”也不能作为绝对防下载保证。
-
-## 必须由真实 Steam 会话验收的项目
-
-| 项目 | 最小证据 | 不能代替该证据的结果 |
-| --- | --- | --- |
-| 正式游戏库接入 | Steam 库中 AppID 4162040 的正式条目显示可启动 | 本工具显示“已配置”、ACF 存在 |
-| 启动国服 | 由该正式条目进入原国服账号／服务器流程，路径与已选客户端一致 | 仅出现包装器进程、环境变量包含 AppID |
-| 原生游玩时长 | 记录启动前时长，实际运行约 10 分钟，正常退出并同步后记录正式条目的增长 | 包装器自行计时、`LastPlayed` 改变、Steam 显示正在运行 |
-| 好友状态 | 好友端或第二个正常账号看到此正式条目的游戏中状态，并在退出后结束 | 仅当前用户库中的“停止”按钮、游戏内普通好友列表 |
-| Steam Overlay | 游戏实际渲染时 Shift+Tab 成功显示 Steam 界面；截图可作留证 | gameoverlayui 进程存在、DLL 文件存在、继承了 Steam 环境 |
-| 退出生命周期 | 游戏正常退出后，包装器结束，Steam 正式条目恢复“开始” | 只等待首个启动进程后立即退出、手动关闭包装器 |
-| 未下载国际服资源 | 对照配置前后下载队列／占位目录内容和 Steam 下载日志 | 本工具自身没有 HTTP 游戏下载逻辑 |
-| 更新持久性 | 国服和 Steam 分别正常更新后重复上述验证，且修复／恢复仍有效 | 隔离夹具中更换 BuildID 后测试通过 |
-
-验收时应分别记录：已通过、失败、未测试。好友状态、时长和 Overlay 可以有不同结果，不能合并为一个“Steam 识别成功”。不把测试日志中的 AppID、继承环境或进程路径包装成账号服务器已经确认的结果。
-
-## 不实施的行为
-
-本工具不注入 DLL，不创建挂起进程做内存修改，不伪造官方父进程，不改反作弊，不写国服受保护文件，不调用 Steamworks 伪造富状态、成就、账号数据或时长。若普通 Steam 启动链无法实现 Overlay 或时长，应如实记录该项失败，不增加上述手段绕过限制。
+不部署注入模块，不伪造官方父进程，不修改游戏或反作弊受保护文件，不修改 Starward，不伪造 Steamworks 状态、成就或时长。普通启动链不能做到的功能应标记为未验证或失败，不添加绕过手段。

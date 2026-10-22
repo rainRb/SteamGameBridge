@@ -1,13 +1,14 @@
+using SteamGameBridge.Core;
 using Microsoft.Win32;
 using System.Diagnostics;
 using System.Reflection;
 using System.Security.Cryptography;
 
-namespace ZZZSteamBridge.App;
+namespace SteamGameBridge.App;
 
 internal static class LocalEnvironment
 {
-    internal static string StateDirectory => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ZZZSteamBridge");
+    internal static string StateDirectory => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SteamGameBridge");
     internal static string SteamRoot()
     {
         string? path = Registry.GetValue(@"HKEY_CURRENT_USER\Software\Valve\Steam", "SteamPath", null) as string;
@@ -15,13 +16,6 @@ internal static class LocalEnvironment
         return Path.GetFullPath(path);
     }
 
-    internal static string NativeGame()
-    {
-        string? path = Registry.GetValue(@"HKEY_CURRENT_USER\Software\miHoYo\HYP\1_1\nap_cn", "GameInstallPath", null) as string;
-        return path is null ? "" : Path.Combine(path, "ZenlessZoneZero.exe");
-    }
-
-    internal static bool GameRunning() => AnyProcess("ZenlessZoneZero");
     internal static bool SteamRunning() => AnyProcess("steam");
     internal static string? ActiveSteamAccount()
     {
@@ -29,7 +23,7 @@ internal static class LocalEnvironment
         uint id = value is int signed ? unchecked((uint)signed) : value is uint unsigned ? unsigned : 0;
         return id == 0 ? null : id.ToString(System.Globalization.CultureInfo.InvariantCulture);
     }
-    internal static bool Busy() => SteamRunning() || GameRunning() || NativeLauncher.BridgeRunning();
+    internal static bool Busy(GameProfile profile) => SteamRunning() || NativeLauncher.BridgeRunning(profile.AppId) || (!string.IsNullOrWhiteSpace(profile.Request.NativeExe) && GameProcessTracker.IsRunning(profile.Request.NativeExe));
     private static bool AnyProcess(string name)
     {
         var processes = Process.GetProcessesByName(name);
@@ -54,12 +48,12 @@ internal static class LocalEnvironment
     internal static (string Helper, string Placeholder) StageTools(string state)
     {
         string source = Environment.ProcessPath ?? throw new IOException("无法定位当前工具。");
-        if (!Path.GetFileName(source).Equals("ZZZSteamBridge.exe", StringComparison.OrdinalIgnoreCase)) throw new IOException("请直接运行已发布的 ZZZSteamBridge.exe。");
+        if (!Path.GetFileName(source).Equals("SteamGameBridge.exe", StringComparison.OrdinalIgnoreCase)) throw new IOException("请直接运行已发布的 SteamGameBridge.exe。");
         string version = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(source)))[..16].ToLowerInvariant();
         string directory = Path.Combine(state, "bin", version);
         GuardPath(directory);
         Directory.CreateDirectory(directory);
-        string helper = Path.Combine(directory, "ZZZSteamBridge.exe");
+        string helper = Path.Combine(directory, "SteamGameBridge.exe");
         if (!Path.GetFullPath(source).Equals(helper, StringComparison.OrdinalIgnoreCase))
         {
             GuardPath(helper);

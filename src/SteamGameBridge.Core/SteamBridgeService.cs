@@ -2,25 +2,22 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 
-namespace ZZZSteamBridge.Core;
+namespace SteamGameBridge.Core;
 
 /// <summary>Owns only its isolated Steam placeholder, ACF and one selected user's LaunchOptions.</summary>
 public sealed class SteamBridgeService(BridgeServiceOptions options)
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
-    private string State => PathSafety.Full(options.StateDirectory);
+    public string State => BridgeIdentity.IntegrationDirectory(options.StateDirectory, options.SteamRoot, options.AppId);
     private string Active => Path.Combine(State, "active.json");
-    private const string MarkerName = ".zzz-steam-bridge-owner.json";
+    private const string MarkerName = ".steam-game-bridge-owner.json";
 
     public SetupPreview Preview(SetupRequest request, SteamAppMetadata metadata)
     {
         ValidateRequest(request, metadata);
-        var manifest = Path.Combine(PathSafety.Full(request.LibraryRoot), "steamapps", $"appmanifest_{SteamAppMetadata.AppId}.acf");
+        var manifest = Path.Combine(PathSafety.Full(request.LibraryRoot), "steamapps", $"appmanifest_{options.AppId}.acf");
         var game = Path.Combine(PathSafety.Full(request.LibraryRoot), "steamapps", "common", metadata.InstallDirectory);
-        var command = QuoteCommand(request.HelperExe) + " --game " + QuoteCommand(request.NativeExe);
-        command += " --";
-        if (!string.IsNullOrWhiteSpace(request.GameArguments)) command += " " + request.GameArguments.Trim();
-        command += " --steam-command %command%";
+        var command = WindowsArguments.Quote(request.HelperExe) + " --profile " + WindowsArguments.Quote(Path.Combine(State, "launch.json")) + " --steam-command %command%";
         return new(manifest, game, command, metadata.BuildId,
             ["工具仅下载 Steam 元数据，不下载国际服游戏资源。Steam 客户端更新、校验或元数据变更仍可能触发下载；请勿点击验证完整性或强制更新。", "正式游戏识别、游玩时长、好友状态与 Overlay 需在实际 Steam 客户端中验证；本工具不注入游戏、不绕过反作弊。"]);
     }
@@ -30,9 +27,14 @@ public sealed class SteamBridgeService(BridgeServiceOptions options)
         EnsureIdle(); var preview = Preview(request, metadata);
         using var stateLock = Lock();
         if (File.Exists(Active)) throw new BridgeException("已有接入记录；请检查、修复或恢复该记录后再接入。");
-        RejectForeignInstall(request, preview);
         var config = ReadText(request.AccountConfigPath);
-        var original = ValveKeyValues.ReadLaunchOptions(config.Text);
+        var original = ValveKeyValues.ReadLaunchOptions(config.Text, options.AppId);
+        if (request.ExistingOptionsAction == ExistingLaunchOptionsAction.Keep && !string.IsNullOrWhiteSpace(original.Value))
+            return new("", "已保留原设置，本次未接入。");
+        if (request.OriginalOptionsReviewed && request.ExpectedOriginalLaunchOptions != original.Value) throw new BridgeException("原启动项在确认后发生变化，请重新预览。");
+        if (!string.IsNullOrWhiteSpace(original.Value) && (!request.OriginalOptionsReviewed || request.ExistingOptionsAction == ExistingLaunchOptionsAction.Keep))
+            throw new BridgeException("已有启动项，请先明确选择保留参数或完全替换并确认预览。");
+        RejectForeignInstall(request, preview);
         var receipt = new BridgeReceipt { Request = request, Metadata = metadata, Preview = preview, OriginalLaunchOptions = original.Value, OriginalLaunchOptionsExists = original.Exists, OriginalConfigHash = HashFile(request.AccountConfigPath) };
         var backupDir = Path.Combine(State, "backups", receipt.Id); PathSafety.NoReparse(backupDir); Directory.CreateDirectory(backupDir);
         receipt.ConfigBackupFile = Path.Combine(backupDir, "localconfig.vdf.original");
@@ -56,7 +58,7 @@ public sealed class SteamBridgeService(BridgeServiceOptions options)
             EnsureIdle(); AtomicNew(preview.ManifestPath, manifestBytes);
             EnsureIdle();
             if (HashFile(request.AccountConfigPath) != receipt.OriginalConfigHash) throw new BridgeException("Steam 配置已变化，保留恢复记录且未覆盖配置。");
-            WriteTextAtomic(request.AccountConfigPath, config, ValveKeyValues.SetLaunchOptions(config.Text, preview.LaunchOptions));
+            WriteTextAtomic(request.AccountConfigPath, config, ValveKeyValues.SetLaunchOptions(config.Text, options.AppId, preview.LaunchOptions));
             receipt.Phase = "active"; Save(receipt);
             return new(receipt.Id, "已接入；启动选项已写入所选 Steam 用户。请打开 Steam 后从正式游戏条目测试。", preview);
         }
@@ -77,7 +79,7 @@ public sealed class SteamBridgeService(BridgeServiceOptions options)
         var conflicts = FindConflicts(receipt, allowMissing: true, includeConfig: false);
         if (conflicts.Count != 0) throw new BridgeException("修复已停止，检测到非本工具变更：" + string.Join("；", conflicts));
         if (receipt.Phase != "active") throw new BridgeException("存在未完成操作，请先恢复。");
-        var config = ReadText(receipt.Request.AccountConfigPath); var value = ValveKeyValues.ReadLaunchOptions(config.Text);
+        var config = ReadText(receipt.Request.AccountConfigPath); var value = ValveKeyValues.ReadLaunchOptions(config.Text, options.AppId);
         if (value.Exists && !string.IsNullOrEmpty(value.Value) && value.Value != receipt.Preview.LaunchOptions) throw new BridgeException("所选用户的启动选项已被更改，请先恢复并重新预览接入。");
         // Plan all bytes before any writes; preserve a recovery copy of the previous owned manifest.
         var nextFiles = PlannedFiles(receipt, freshMetadata);
@@ -115,7 +117,7 @@ public sealed class SteamBridgeService(BridgeServiceOptions options)
             EnsureIdle(); AtomicWrite(receipt.Preview.ManifestPath, manifest);
             EnsureIdle();
             if (HashFile(receipt.Request.AccountConfigPath) != HashBytes(EncodeText(config, config.Text))) throw new BridgeException("修复期间 Steam 用户配置发生变化，已停止写入启动选项。");
-            if (!value.Exists || string.IsNullOrEmpty(value.Value)) WriteTextAtomic(receipt.Request.AccountConfigPath, config, ValveKeyValues.SetLaunchOptions(config.Text, freshPreview.LaunchOptions));
+            if (!value.Exists || string.IsNullOrEmpty(value.Value)) WriteTextAtomic(receipt.Request.AccountConfigPath, config, ValveKeyValues.SetLaunchOptions(config.Text, options.AppId, freshPreview.LaunchOptions));
             receipt.OwnedFiles = nextHashes; receipt.RecoveryFileHashes.Clear(); receipt.RecoveryManifestHashes.Clear(); receipt.Phase = "active"; Save(receipt);
             return new(receipt.Id, "已使用刚获取的公共 Steam 元数据修复自有占位文件和安装清单。", freshPreview);
         }
@@ -133,13 +135,13 @@ public sealed class SteamBridgeService(BridgeServiceOptions options)
         if (receiptId is not null && receiptId != receipt.Id) throw new BridgeException("恢复记录编号不匹配。");
         ValidateReceiptPaths(receipt);
         var conflicts = FindConflicts(receipt, allowMissing: true, includeConfig: false);
-        var config = ReadText(receipt.Request.AccountConfigPath); var value = ValveKeyValues.ReadLaunchOptions(config.Text);
+        var config = ReadText(receipt.Request.AccountConfigPath); var value = ValveKeyValues.ReadLaunchOptions(config.Text, options.AppId);
         var configOwned = value.Exists && value.Value == receipt.Preview.LaunchOptions;
         var configOriginal = value.Exists == receipt.OriginalLaunchOptionsExists && value.Value == receipt.OriginalLaunchOptions;
         // Restore own startup setting even if Steam downloaded content into the placeholder.
         if (configOwned)
         {
-            EnsureIdle(); WriteTextAtomic(receipt.Request.AccountConfigPath, config, ValveKeyValues.SetLaunchOptions(config.Text, receipt.OriginalLaunchOptions, receipt.OriginalLaunchOptionsExists));
+            EnsureIdle(); WriteTextAtomic(receipt.Request.AccountConfigPath, config, ValveKeyValues.SetLaunchOptions(config.Text, options.AppId, receipt.OriginalLaunchOptions, receipt.OriginalLaunchOptionsExists));
         }
         else if (!configOriginal) conflicts.Add("启动选项由其他程序或用户更改，已保留当前值");
         if (conflicts.Any(x => !x.StartsWith("启动选项", StringComparison.Ordinal)))
@@ -176,9 +178,12 @@ public sealed class SteamBridgeService(BridgeServiceOptions options)
 
     private void ValidateRequest(SetupRequest request, SteamAppMetadata metadata)
     {
+        SteamAppMetadata.ValidateAppId(options.AppId);
+        if (!PathSafety.Same(request.SteamRoot, options.SteamRoot)) throw new BridgeException("Steam 安装位置与配置不一致。");
+        LaunchConfiguration.Validate(request);
         if (metadata.FetchedAt > DateTimeOffset.UtcNow.AddMinutes(5) || DateTimeOffset.UtcNow - metadata.FetchedAt > TimeSpan.FromMinutes(30)) throw new BridgeException("Steam 元数据已过期，请重新联网读取。");
         SteamAppMetadata.ValidateRelativePath(metadata.InstallDirectory, false); SteamAppMetadata.ValidateRelativePath(metadata.Executable, true);
-        if (!metadata.Name.Contains("Zenless Zone Zero", StringComparison.OrdinalIgnoreCase) || !SteamAppMetadata.PositiveId(metadata.BuildId) || metadata.Depots.Count == 0) throw new BridgeException("Steam 元数据无效。");
+        if (string.IsNullOrWhiteSpace(metadata.Name) || metadata.AppId != options.AppId || !SteamAppMetadata.PositiveId(metadata.BuildId) || metadata.Depots.Count == 0) throw new BridgeException("Steam 元数据无效。");
         foreach (var d in metadata.Depots) if (!SteamAppMetadata.PositiveId(d.DepotId) || !SteamAppMetadata.PositiveId(d.ManifestId) || !SteamAppMetadata.PositiveId(d.Size)) throw new BridgeException("Steam depot 元数据无效。");
         foreach (var path in new[] { State, request.SteamRoot, request.LibraryRoot, request.AccountConfigPath, request.NativeExe, request.HelperExe, request.PlaceholderExe ?? request.HelperExe }) PathSafety.NoReparse(path);
         if (!File.Exists(Path.Combine(request.SteamRoot, "steam.exe"))) throw new BridgeException("Steam 根目录没有 steam.exe。");
@@ -186,9 +191,9 @@ public sealed class SteamBridgeService(BridgeServiceOptions options)
         var account = SteamDiscovery.ReadAccounts(request.SteamRoot).Accounts.FirstOrDefault(x => PathSafety.Same(x.LocalConfigPath, request.AccountConfigPath));
         if (account is null) throw new BridgeException("所选配置不属于 Steam 已登记的明确用户；请重新选择账号。");
         if (!File.Exists(request.AccountConfigPath)) throw new BridgeException("所选用户尚无 localconfig.vdf，请先正常登录 Steam 后退出。");
-        PathSafety.RequireExe(request.NativeExe, "ZenlessZoneZero.exe"); PathSafety.RequireExe(request.HelperExe); PathSafety.RequireExe(request.PlaceholderExe ?? request.HelperExe);
+        PathSafety.RequireExe(request.NativeExe); PathSafety.RequireExe(request.HelperExe); PathSafety.RequireExe(request.PlaceholderExe ?? request.HelperExe);
         var nativeDir = Path.GetDirectoryName(PathSafety.Full(request.NativeExe))!;
-        foreach (var target in new[] { State, request.AccountConfigPath, Path.Combine(request.LibraryRoot, "steamapps", "common", metadata.InstallDirectory), Path.Combine(request.LibraryRoot, "steamapps", $"appmanifest_{SteamAppMetadata.AppId}.acf") })
+        foreach (var target in new[] { State, request.AccountConfigPath, Path.Combine(request.LibraryRoot, "steamapps", "common", metadata.InstallDirectory), Path.Combine(request.LibraryRoot, "steamapps", $"appmanifest_{options.AppId}.acf") })
             if (PathSafety.Same(target, nativeDir) || PathSafety.Under(target, nativeDir)) throw new BridgeException("接入写入位置与国服游戏目录重叠，已拒绝。");
         if (request.GameArguments.Any(c => c is '\0' or '\r' or '\n') || request.GameArguments.Contains("%command%", StringComparison.OrdinalIgnoreCase) || request.GameArguments.Contains("--steam-command", StringComparison.OrdinalIgnoreCase) || request.GameArguments.Contains("login_auth_ticket", StringComparison.OrdinalIgnoreCase)) throw new BridgeException("游戏参数包含无效或保留的桥接/Steam 登录参数。");
         if (PathSafety.Under(request.NativeExe, Path.Combine(request.LibraryRoot, "steamapps", "common", metadata.InstallDirectory))) throw new BridgeException("国服路径不能指向 Steam 占位目录。");
@@ -196,8 +201,9 @@ public sealed class SteamBridgeService(BridgeServiceOptions options)
 
     private void ValidateReceiptPaths(BridgeReceipt receipt)
     {
+        if (receipt.Request is null || receipt.Metadata is null || receipt.Metadata.AppId != options.AppId || !PathSafety.Same(receipt.Request.SteamRoot, options.SteamRoot)) throw new BridgeException("恢复记录与当前 AppID / Steam 安装不一致。");
         if (receipt.Schema != 1 || string.IsNullOrEmpty(receipt.Id) || receipt.Id.Length != 32 || receipt.Id.Any(c => !Uri.IsHexDigit(c)) || receipt.Request is null || receipt.Metadata is null || receipt.Preview is null || receipt.OwnedFiles is null || receipt.RecoveryFileHashes is null || receipt.RecoveryManifestHashes is null) throw new BridgeException("恢复记录格式无效。");
-        var expectedManifest = Path.Combine(receipt.Request.LibraryRoot, "steamapps", $"appmanifest_{SteamAppMetadata.AppId}.acf");
+        var expectedManifest = Path.Combine(receipt.Request.LibraryRoot, "steamapps", $"appmanifest_{options.AppId}.acf");
         SteamAppMetadata.ValidateRelativePath(receipt.Metadata.InstallDirectory, false);
         var expectedGame = Path.Combine(receipt.Request.LibraryRoot, "steamapps", "common", receipt.Metadata.InstallDirectory);
         if (!options.RegisteredLibraries.Any(x => PathSafety.Same(x, receipt.Request.LibraryRoot)) || !PathSafety.Same(receipt.Preview.ManifestPath, expectedManifest) || !PathSafety.Same(receipt.Preview.PlaceholderDirectory, expectedGame) || !PathSafety.Under(receipt.ConfigBackupFile, Path.Combine(State, "backups", receipt.Id))) throw new BridgeException("恢复记录路径不符合接入位置。");
@@ -216,9 +222,9 @@ public sealed class SteamBridgeService(BridgeServiceOptions options)
     {
         foreach (var lib in options.RegisteredLibraries)
         {
-            var manifest = Path.Combine(lib, "steamapps", $"appmanifest_{SteamAppMetadata.AppId}.acf"); PathSafety.NoReparse(manifest);
-            if (File.Exists(manifest)) throw new BridgeException("已有绝区零 Steam 安装清单，拒绝覆盖已有国际服安装或未知接入。");
-            foreach (var partial in new[] { Path.Combine(lib, "steamapps", "downloading", SteamAppMetadata.AppId), Path.Combine(lib, "steamapps", "temp", SteamAppMetadata.AppId) })
+            var manifest = Path.Combine(lib, "steamapps", $"appmanifest_{options.AppId}.acf"); PathSafety.NoReparse(manifest);
+            if (File.Exists(manifest)) throw new BridgeException("该 AppID 已有 Steam 安装清单，拒绝覆盖已有国际服安装或未知接入。");
+            foreach (var partial in new[] { Path.Combine(lib, "steamapps", "downloading", options.AppId), Path.Combine(lib, "steamapps", "temp", options.AppId) })
             { PathSafety.NoReparse(partial); if (Directory.Exists(partial)) throw new BridgeException("Steam 中存在该游戏的下载或暂存目录，请先自行取消下载。"); }
         }
         PathSafety.NoReparse(preview.PlaceholderDirectory); PathSafety.NoReparse(preview.ManifestPath);
@@ -230,7 +236,7 @@ public sealed class SteamBridgeService(BridgeServiceOptions options)
         ValidateReceiptPaths(receipt); var conflicts = new List<string>();
         foreach (var lib in options.RegisteredLibraries)
         {
-            foreach (var partial in new[] { Path.Combine(lib, "steamapps", "downloading", SteamAppMetadata.AppId), Path.Combine(lib, "steamapps", "temp", SteamAppMetadata.AppId) })
+            foreach (var partial in new[] { Path.Combine(lib, "steamapps", "downloading", options.AppId), Path.Combine(lib, "steamapps", "temp", options.AppId) })
             { PathSafety.NoReparse(partial); if (Directory.Exists(partial)) conflicts.Add("存在 Steam 下载或暂存目录"); }
         }
         if (File.Exists(receipt.Preview.ManifestPath))
@@ -251,7 +257,7 @@ public sealed class SteamBridgeService(BridgeServiceOptions options)
             if (!allowMissing && !File.Exists(PathSafety.Within(receipt.Preview.PlaceholderDirectory, owned.Key))) conflicts.Add("占位文件缺失：" + owned.Key);
         if (includeConfig)
         {
-            var setting = ValveKeyValues.ReadLaunchOptions(ReadText(receipt.Request.AccountConfigPath).Text);
+            var setting = ValveKeyValues.ReadLaunchOptions(ReadText(receipt.Request.AccountConfigPath).Text, options.AppId);
             if (!setting.Exists || setting.Value != receipt.Preview.LaunchOptions) conflicts.Add("所选用户启动选项发生变化");
         }
         return conflicts;
@@ -267,7 +273,7 @@ public sealed class SteamBridgeService(BridgeServiceOptions options)
         }
     }
 
-    private static bool IsManifestOwned(BridgeReceipt receipt)
+    private bool IsManifestOwned(BridgeReceipt receipt)
     {
         try
         {
@@ -276,7 +282,7 @@ public sealed class SteamBridgeService(BridgeServiceOptions options)
             var app = ValveKeyValues.Unique(ValveKeyValues.Parse(ReadText(receipt.Preview.ManifestPath).Text), "AppState")?.Children;
             if (app is null) return false;
             string? Value(string key) => ValveKeyValues.Unique(app, key)?.Value;
-            if (Value("appid") != SteamAppMetadata.AppId || Value("installdir") != receipt.Metadata.InstallDirectory || Value("buildid") != receipt.Metadata.BuildId || Value("StateFlags") != "4") return false;
+            if (Value("appid") != options.AppId || Value("installdir") != receipt.Metadata.InstallDirectory || Value("buildid") != receipt.Metadata.BuildId || Value("StateFlags") != "4") return false;
             foreach (var field in new[] { "BytesToDownload", "BytesToStage", "ScheduledAutoUpdate", "TargetBuildID" }) if (Value(field) is not (null or "0")) return false;
             var depots = ValveKeyValues.Unique(app, "InstalledDepots")?.Children;
             if (depots is null || depots.Count != receipt.Metadata.Depots.Count) return false;
@@ -290,10 +296,10 @@ public sealed class SteamBridgeService(BridgeServiceOptions options)
         catch (BridgeException) { return false; }
     }
 
-    private static string RepairManifest(string text, BridgeReceipt receipt, SteamAppMetadata previousMetadata)
+    private string RepairManifest(string text, BridgeReceipt receipt, SteamAppMetadata previousMetadata)
     {
         var m = receipt.Metadata;
-        foreach (var item in new Dictionary<string, string> { ["appid"] = SteamAppMetadata.AppId, ["name"] = m.Name, ["installdir"] = m.InstallDirectory, ["StateFlags"] = "4", ["buildid"] = m.BuildId, ["UpdateResult"] = "0", ["BytesToDownload"] = "0", ["BytesDownloaded"] = "0", ["BytesToStage"] = "0", ["BytesStaged"] = "0", ["TargetBuildID"] = "0", ["ScheduledAutoUpdate"] = "0", ["AutoUpdateBehavior"] = "1", ["SizeOnDisk"] = new FileInfo(receipt.Request.PlaceholderExe ?? receipt.Request.HelperExe).Length.ToString() })
+        foreach (var item in new Dictionary<string, string> { ["appid"] = options.AppId, ["name"] = m.Name, ["installdir"] = m.InstallDirectory, ["StateFlags"] = "4", ["buildid"] = m.BuildId, ["UpdateResult"] = "0", ["BytesToDownload"] = "0", ["BytesDownloaded"] = "0", ["BytesToStage"] = "0", ["BytesStaged"] = "0", ["TargetBuildID"] = "0", ["ScheduledAutoUpdate"] = "0", ["AutoUpdateBehavior"] = "1", ["SizeOnDisk"] = new FileInfo(receipt.Request.PlaceholderExe ?? receipt.Request.HelperExe).Length.ToString() })
             text = ValveKeyValues.SetValue(text, ["AppState"], item.Key, item.Value);
         foreach (var old in previousMetadata.Depots.Where(x => !m.Depots.Any(n => n.DepotId == x.DepotId))) text = ValveKeyValues.RemoveObject(text, ["AppState", "InstalledDepots"], old.DepotId);
         foreach (var depot in m.Depots)
@@ -311,10 +317,10 @@ public sealed class SteamBridgeService(BridgeServiceOptions options)
         }
     }
 
-    private static Dictionary<string, byte[]> PlannedFiles(BridgeReceipt receipt, SteamAppMetadata metadata)
+    private Dictionary<string, byte[]> PlannedFiles(BridgeReceipt receipt, SteamAppMetadata metadata)
         => new(StringComparer.OrdinalIgnoreCase)
         {
-            [MarkerName] = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { appId = SteamAppMetadata.AppId, owner = "ZZZSteamBridge", receiptId = receipt.Id, createdAt = receipt.CreatedAt })),
+            [MarkerName] = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { appId = options.AppId, owner = "SteamGameBridge", receiptId = receipt.Id, createdAt = receipt.CreatedAt })),
             [metadata.Executable.Replace('\\', Path.DirectorySeparatorChar)] = File.ReadAllBytes(receipt.Request.PlaceholderExe ?? receipt.Request.HelperExe)
         };
 
@@ -323,7 +329,7 @@ public sealed class SteamBridgeService(BridgeServiceOptions options)
         var q = ValveKeyValues.Quote; var m = receipt.Metadata;
         var b = new StringBuilder("\"AppState\"\n{\n");
         void Value(string key, string value) => b.Append('\t').Append(q(key)).Append("\t\t").Append(q(value)).Append('\n');
-        Value("appid", SteamAppMetadata.AppId); Value("Universe", "1"); Value("name", m.Name); Value("StateFlags", "4"); Value("installdir", m.InstallDirectory);
+        Value("appid", m.AppId); Value("Universe", "1"); Value("name", m.Name); Value("StateFlags", "4"); Value("installdir", m.InstallDirectory);
         Value("LastUpdated", DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString()); Value("UpdateResult", "0");
         Value("SizeOnDisk", new FileInfo(receipt.Request.PlaceholderExe ?? receipt.Request.HelperExe).Length.ToString()); Value("buildid", m.BuildId);
         Value("LastOwner", "0"); Value("BytesToDownload", "0"); Value("BytesDownloaded", "0"); Value("BytesToStage", "0"); Value("BytesStaged", "0"); Value("TargetBuildID", "0"); Value("AutoUpdateBehavior", "1"); Value("AllowOtherDownloadsWhileRunning", "0"); Value("ScheduledAutoUpdate", "0");
@@ -333,22 +339,29 @@ public sealed class SteamBridgeService(BridgeServiceOptions options)
         b.Append("\t}\n\t\"UserConfig\"\n\t{\n\t\t\"language\"\t\t\"schinese\"\n\t}\n}\n"); return b.ToString();
     }
 
-    private void EnsureIdle() { if (options.IsBusy()) throw new BridgeException("请完全退出 Steam、绝区零及运行中的桥接游戏进程，再修改配置。"); }
-    private FileStream Lock()
+    private void EnsureIdle() { if (options.IsBusy()) throw new BridgeException("请完全退出 Steam 及运行中的桥接游戏进程，再修改配置。"); }
+    private IDisposable Lock()
     {
-        PathSafety.NoReparse(State); Directory.CreateDirectory(State);
-        var path = Path.Combine(State, ".operation.lock"); PathSafety.NoReparse(path);
-        try { return new(path, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None); }
-        catch (IOException) { throw new BridgeException("另一个接入或恢复操作正在进行。"); }
+        // One cross-process lock per Steam install also serializes edits to a shared account VDF.
+        var mutex = new Mutex(false, "Local\\SteamGameBridge.Config." + BridgeIdentity.Key(options.SteamRoot, "1"));
+        bool acquired;
+        try { acquired = mutex.WaitOne(TimeSpan.FromSeconds(15)); } catch (AbandonedMutexException) { acquired = true; }
+        if (!acquired) { mutex.Dispose(); throw new BridgeException("另一个 Steam 配置操作正在进行，请稍后重试。"); }
+        try { PathSafety.NoReparse(State); Directory.CreateDirectory(State); return new MutexLease(mutex); }
+        catch { mutex.ReleaseMutex(); mutex.Dispose(); throw; }
     }
+    private sealed class MutexLease(Mutex mutex) : IDisposable { public void Dispose() { mutex.ReleaseMutex(); mutex.Dispose(); } }
     private BridgeReceipt LoadRequired()
     {
         PathSafety.NoReparse(Active);
         var receipt = JsonSerializer.Deserialize<BridgeReceipt>(File.ReadAllBytes(Active), JsonOptions) ?? throw new BridgeException("恢复记录为空。");
         ValidateReceiptPaths(receipt); return receipt;
     }
-    private void Save(BridgeReceipt receipt) => AtomicWrite(Active, Encoding.UTF8.GetBytes(JsonSerializer.Serialize(receipt, JsonOptions)));
-    private static string QuoteCommand(string text) => "\"" + text.Replace("\"", "\\\"", StringComparison.Ordinal) + "\"";
+    private void Save(BridgeReceipt receipt)
+    {
+        AtomicWrite(Active, Encoding.UTF8.GetBytes(JsonSerializer.Serialize(receipt, JsonOptions)));
+        AtomicWrite(Path.Combine(State, "launch.json"), Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new LaunchSpec(options.AppId, receipt.Request), JsonOptions)));
+    }
     private static string HashFile(string path) { PathSafety.NoReparse(path); using var f = File.OpenRead(path); return Convert.ToHexString(SHA256.HashData(f)); }
     private static string HashBytes(byte[] bytes) => Convert.ToHexString(SHA256.HashData(bytes));
     private sealed record TextFile(string Text, Encoding Encoding, byte[] Preamble);
@@ -368,7 +381,7 @@ public sealed class SteamBridgeService(BridgeServiceOptions options)
     private static void AtomicNew(string path, byte[] bytes)
     {
         PathSafety.NoReparse(path); Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        var temp = path + ".zzzbridge-" + Guid.NewGuid().ToString("N") + ".tmp";
+        var temp = path + ".steamgamebridge-" + Guid.NewGuid().ToString("N") + ".tmp";
         try { WriteNewBytes(temp, bytes); PathSafety.NoReparse(path); File.Move(temp, path); }
         finally { if (File.Exists(temp)) File.Delete(temp); }
     }
@@ -377,7 +390,7 @@ public sealed class SteamBridgeService(BridgeServiceOptions options)
     private static void AtomicWrite(string path, byte[] bytes)
     {
         PathSafety.NoReparse(path); Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        var temp = path + ".zzzbridge-" + Guid.NewGuid().ToString("N") + ".tmp";
+        var temp = path + ".steamgamebridge-" + Guid.NewGuid().ToString("N") + ".tmp";
         try
         {
             WriteNewBytes(temp, bytes); PathSafety.NoReparse(path);

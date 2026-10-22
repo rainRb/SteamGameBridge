@@ -1,6 +1,6 @@
 using System.Text;
 
-namespace ZZZSteamBridge.Core;
+namespace SteamGameBridge.Core;
 
 /// <summary>A strict text-span parser. Edits affect only one targeted VDF value; comments and all other text survive.</summary>
 public static class ValveKeyValues
@@ -82,11 +82,11 @@ public static class ValveKeyValues
         if (found.Length > 1) throw new BridgeException($"VDF 中存在重复的 {key} 项，拒绝含糊修改。");
         return found.FirstOrDefault();
     }
-    private static readonly string[] LaunchPath = ["UserLocalConfigStore", "Software", "Valve", "Steam", "apps", SteamAppMetadata.AppId];
-    public static (bool Exists, string? Value) ReadLaunchOptions(string text)
+    private static string[] LaunchPath(string appId) { SteamAppMetadata.ValidateAppId(appId); return ["UserLocalConfigStore", "Software", "Valve", "Steam", "apps", appId]; }
+    public static (bool Exists, string? Value) ReadLaunchOptions(string text, string appId)
     {
         var nodes = Parse(text);
-        foreach (var key in LaunchPath)
+        foreach (var key in LaunchPath(appId))
         {
             var n = Unique(nodes, key);
             if (n is null) return (false, null);
@@ -96,8 +96,8 @@ public static class ValveKeyValues
         if (value?.Children is not null) throw new BridgeException("LaunchOptions 不是字符串。");
         return (value is not null, value?.Value);
     }
-    public static string SetLaunchOptions(string text, string? value, bool exists = true)
-        => SetValue(text, LaunchPath, "LaunchOptions", value, exists);
+    public static string SetLaunchOptions(string text, string appId, string? value, bool exists = true)
+        => SetValue(text, LaunchPath(appId), "LaunchOptions", value, exists);
 
     internal static string SetValue(string text, string[] objectPath, string leaf, string? value, bool exists = true)
     {
