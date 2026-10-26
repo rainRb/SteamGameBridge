@@ -146,6 +146,15 @@ internal static class Program
             using var bitmap = new Bitmap(surface.Width, surface.Height);
             surface.DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size));
             Assert(bitmap.GetPixel(40, 150).ToArgb() == UiTheme.Surface.ToArgb(), "dark surface rendered on " + key);
+            if (key == "GameSettings")
+            {
+                foreach (var combo in Descendants(surface).OfType<ComboBox>().Where(c => c.Visible))
+                {
+                    var bounds = BoundsInForm(combo, surface);
+                    Color pixel = bitmap.GetPixel(bounds.Left + bounds.Width / 2, bounds.Top + bounds.Height / 2);
+                    Assert(pixel.R < 128 && pixel.G < 128 && pixel.B < 128, "dark dropdown does not render a white field");
+                }
+            }
             bitmap.Save(Path.Combine(Fixture, "Dark-" + key + ".png"));
         }
     }
@@ -160,7 +169,7 @@ internal static class Program
         double x = L(a), y = L(b); return (Math.Max(x, y) + .05) / (Math.Min(x, y) + .05);
     }
 
-    private static Rectangle BoundsInForm(Control control, Form form)
+    private static Rectangle BoundsInForm(Control control, Control form)
     {
         Point point = control.Location;
         for (Control? parent = control.Parent; parent is not null && parent != form; parent = parent.Parent) point.Offset(parent.Location);

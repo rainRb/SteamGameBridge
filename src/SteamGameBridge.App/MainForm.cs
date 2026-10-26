@@ -39,7 +39,7 @@ internal sealed class MainForm : Form
     private Button _apply = null!, _repair = null!, _restore = null!, _launch = null!, _save = null!, _delete = null!;
     private static TextBox Input() => new() { Anchor = AnchorStyles.Left | AnchorStyles.Right, BorderStyle = BorderStyle.FixedSingle, BackColor = UiTheme.Input, ForeColor = UiTheme.Ink, Margin = new Padding(0, 5, 0, 5) };
     private static TextBox Output() => new() { Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill, BackColor = UiTheme.Surface, BorderStyle = BorderStyle.None, ForeColor = UiTheme.Ink };
-    private static ComboBox Choice() => new ThemeComboBox() { DropDownStyle = ComboBoxStyle.DropDownList, Anchor = AnchorStyles.Left | AnchorStyles.Right, FlatStyle = FlatStyle.Flat, BackColor = UiTheme.Input, ForeColor = UiTheme.Ink, Margin = new Padding(0, 5, 0, 5) };
+    private static ComboBox Choice() => new() { DropDownStyle = ComboBoxStyle.DropDownList, Anchor = AnchorStyles.Left | AnchorStyles.Right, FlatStyle = FlatStyle.Flat, BackColor = UiTheme.Input, ForeColor = UiTheme.Ink, Margin = new Padding(0, 5, 0, 5) };
     private sealed record AccountRow(SteamAccount Value) { public override string ToString() => $"{Value.DisplayName} · {Value.AccountId}"; }
 
     public MainForm(bool demo, string? stateDirectory = null, Func<bool>? protocolAvailable = null, Func<bool>? darkMode = null)

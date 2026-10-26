@@ -197,23 +197,6 @@ internal sealed class GameList : ListBox
 
 internal enum ThemeTone { Muted, Error }
 
-internal sealed class ThemeComboBox : ComboBox
-{
-    internal ThemeComboBox() { DrawMode = DrawMode.OwnerDrawFixed; ItemHeight = Math.Max(20, Font.Height + 4); }
-    protected override void OnFontChanged(EventArgs e) { base.OnFontChanged(e); ItemHeight = Math.Max(20, Font.Height + 4); }
-    protected override void OnDrawItem(DrawItemEventArgs e)
-    {
-        bool edit = (e.State & DrawItemState.ComboBoxEdit) != 0;
-        bool selected = !edit && (e.State & DrawItemState.Selected) != 0;
-        using var background = new SolidBrush(selected ? UiTheme.Selection : UiTheme.Input);
-        e.Graphics.FillRectangle(background, e.Bounds);
-        string text = (e.Index >= 0 && e.Index < Items.Count ? GetItemText(Items[e.Index]) : Text) ?? "";
-        Color foreground = !Enabled ? UiTheme.Disabled : selected ? UiTheme.SelectionInk : UiTheme.Ink;
-        var bounds = new Rectangle(e.Bounds.Left + 4, e.Bounds.Top, Math.Max(1, e.Bounds.Width - 8), e.Bounds.Height);
-        TextRenderer.DrawText(e.Graphics, text, Font, bounds, foreground, TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis);
-    }
-}
-
 internal sealed record ThemePalette(bool IsDark, bool HighContrast, Color Canvas, Color Surface, Color Input, Color Ink, Color Muted, Color Border, Color Accent, Color Selection, Color PrimaryInk, Color Disabled, Color Error, Color Hover, Color Pressed, Color PrimaryHover, Color PrimaryPressed)
 {
     internal static ThemePalette Light { get; } = new(false, false,
