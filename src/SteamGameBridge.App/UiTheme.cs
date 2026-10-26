@@ -60,8 +60,7 @@ internal static class UiTheme
     internal static void ApplyMenu(ContextMenuStrip menu)
     {
         menu.BackColor = Surface; menu.ForeColor = Ink;
-        if (menu.Renderer is not ToolStripProfessionalRenderer renderer || renderer.ColorTable is not ThemeMenuColors)
-            menu.Renderer = new ToolStripProfessionalRenderer(new ThemeMenuColors()) { RoundedEdges = false };
+        if (menu.Renderer is not ThemeMenuRenderer) menu.Renderer = new ThemeMenuRenderer();
         foreach (ToolStripItem item in menu.Items)
         {
             item.BackColor = Surface; item.ForeColor = item.Enabled ? Ink : Disabled;
@@ -226,4 +225,19 @@ internal sealed class ThemeMenuColors : ProfessionalColorTable
     public override Color MenuItemBorder => UiTheme.Border;
     public override Color SeparatorDark => UiTheme.Border;
     public override Color SeparatorLight => UiTheme.Surface;
+}
+
+internal sealed class ThemeMenuRenderer : ToolStripProfessionalRenderer
+{
+    internal ThemeMenuRenderer() : base(new ThemeMenuColors()) { RoundedEdges = false; }
+    protected override void OnRenderItemText(ToolStripItemTextRenderEventArgs e)
+    {
+        e.TextColor = !e.Item.Enabled ? UiTheme.Disabled : e.Item.Selected && UiTheme.Palette.HighContrast ? SystemColors.HighlightText : UiTheme.Ink;
+        base.OnRenderItemText(e);
+    }
+    protected override void OnRenderArrow(ToolStripArrowRenderEventArgs e)
+    {
+        e.ArrowColor = e.Item.Enabled ? UiTheme.Ink : UiTheme.Disabled;
+        base.OnRenderArrow(e);
+    }
 }
