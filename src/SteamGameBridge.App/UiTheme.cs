@@ -237,7 +237,7 @@ internal sealed class ThemeMenuRenderer : ToolStripProfessionalRenderer
     }
     protected override void OnRenderArrow(ToolStripArrowRenderEventArgs e)
     {
-        e.ArrowColor = e.Item.Enabled ? UiTheme.Ink : UiTheme.Disabled;
+        e.ArrowColor = e.Item?.Enabled == false ? UiTheme.Disabled : UiTheme.Ink;
         base.OnRenderArrow(e);
     }
 }
