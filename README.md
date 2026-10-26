@@ -84,7 +84,6 @@
 "<稳定工具目录>\SteamGameBridge.exe" --profile "<该游戏状态目录>\launch.json" --steam-command %command%
 ```
 
-`launch.json` 保存此游戏的明确启动配置。直接双击启动包装器不能替代从正式 Steam 条目启动。工具不会自行伪造 `SteamAppId` 或 `SteamGameId`。
 
 ## 原启动项的三个选择
 
@@ -102,7 +101,7 @@
 
 ## Starward 时长
 
-为**绝区零和崩坏3**预设提供“使用 Starward 记录时长”开关。已注册协议可用时，选择预设默认勾选；可手动关闭。没有注册协议时，可以指定现有 Starward EXE。
+为 **绝区零** 和 **崩坏3** 预设提供“使用 Starward 记录时长”开关。已注册协议可用时，选择预设默认勾选；可手动关闭。没有注册协议时，可以指定现有 Starward EXE。
 
 流程是：**Steam → 本工具 → 本地游戏 → 确认真实 PID → 通知 Starward**。协议用于交接进程，不是启动游戏：
 
@@ -161,3 +160,7 @@ docs/                            来源、验证范围、构建与版本说明
 本项目采用 [MIT 许可证](LICENSE)，允许使用、修改和分发。分发源码或软件副本时，请保留原版权声明与许可证文本。软件按原样提供，不附带担保。
 
 游戏、Steam 及相关软件的名称、商标与资源归各自权利人所有。
+
+## 致谢
+
+本项目灵感来自于 [Better-Endfield](https://github.com/Dr-hydra/Better-Endfield) ，同时感谢 [Starward](https://github.com/Scighost/Starward) 开放的协议
