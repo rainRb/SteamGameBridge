@@ -6,6 +6,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AssemblyName>SteamGameBridge</AssemblyName>
+    <ApplicationIcon>../../assets/SteamGameBridge.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <Version>0.2.0-preview.1</Version>
     <PublishSingleFile>true</PublishSingleFile>
@@ -16,6 +17,7 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../SteamGameBridge.Core/SteamGameBridge.Core.csproj" />
+    <EmbeddedResource Include="../../assets/SteamGameBridge.ico" LogicalName="SteamGameBridge.ico" />
     <EmbeddedResource Include="../../assets/SteamPlaceholder.exe" LogicalName="SteamPlaceholder.exe" />
   </ItemGroup>
 </Project>
