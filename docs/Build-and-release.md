@@ -12,6 +12,6 @@ Build.ps1 构建轻量版及自包含单文件，测试实际发布 EXE，再按
 
 本地构建在 artifacts/test-results 保存证据。可用 `-OutputDirectory artifacts/verified` 选择项目内的新输出目录，避免覆盖正在使用的演示程序。网络不可用时 NuGet 漏洞数据查询可能产生 NU1900 警告；这不代表漏洞检查已通过，也不能代替构建或测试结果。没有为绕过该查询而关闭证书校验、改代理或关闭审计。
 
-GitHub Actions 对分支 push、PR 和手动运行进行构建、测试和打包，上传两个版本及测试日志作为构建产物。正常源码提交不触发 Release。历史工作流的 v* 标签预发行通路保留，但本次 0.2.0-dev 任务不创建新标签，不运行新 Release 发布。
+GitHub Actions 对分支 push、PR 和手动运行进行构建、测试和打包，上传两个版本及测试日志作为构建产物。正常源码提交不触发 Release。推送 v* 标签时，工作流在构建和测试通过后发布预览版，附两个版本及 SHA256SUMS.txt。
 
 small 版本需要 .NET 10 Desktop Runtime x64；self-contained 版本包含运行时。两个版本功能相同。更换稳定启动组件前先恢复该游戏接入，再用新程序重新接入。

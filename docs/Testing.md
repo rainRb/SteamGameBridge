@@ -1,6 +1,6 @@
 # 测试与验收范围
 
-适用于 SteamGameBridge 0.2.0-dev。测试使用仓库目录内的模拟 Steam、账号 VDF、假游戏 EXE、假启动器及模拟 Starward 传输；不启动真实 Steam/游戏/Starward，不修改真实配置。测试结束只清理自己创建的夹具；不会结束正在运行的真实游戏。
+适用于 SteamGameBridge 0.2.0-preview.1。测试使用仓库目录内的模拟 Steam、账号 VDF、假游戏 EXE、假启动器及模拟 Starward 传输；不启动真实 Steam/游戏/Starward，不修改真实配置。测试结束只清理自己创建的夹具；不会结束正在运行的真实游戏。
 
 ## 自动化覆盖
 

@@ -71,7 +71,7 @@ jobs:
         with:
           name: SteamGameBridge-windows-x64
           path: packages
-      - name: Create or update experimental GitHub prerelease
+      - name: Create or update GitHub prerelease
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -94,10 +94,10 @@ jobs:
           $existing = & gh release view $tag --json isPrerelease 2>$null
           if ($LASTEXITCODE -eq 0) {
             if (-not ($existing | ConvertFrom-Json).isPrerelease) { throw 'An existing stable release will not be changed or overwritten.' }
-            & gh release edit $tag --prerelease --title "SteamGameBridge $tag (experimental)" --notes-file docs/ReleaseNotes.md
+            & gh release edit $tag --prerelease --title "SteamGameBridge $tag" --notes-file docs/ReleaseNotes.md
             if ($LASTEXITCODE -ne 0) { throw 'Could not update the prerelease notes.' }
             & gh release upload $tag @assets --clobber
           } else {
-            & gh release create $tag @assets --verify-tag --prerelease --title "SteamGameBridge $tag (experimental)" --notes-file docs/ReleaseNotes.md
+            & gh release create $tag @assets --verify-tag --prerelease --title "SteamGameBridge $tag" --notes-file docs/ReleaseNotes.md
           }
           if ($LASTEXITCODE -ne 0) { throw 'GitHub prerelease publication failed.' }

@@ -39,7 +39,7 @@ internal sealed class MainForm : Form
         _demo = demo;
         _state = demo ? Path.Combine(Environment.GetEnvironmentVariable("SGB_DEMO_ROOT") ?? Path.Combine(Path.GetTempPath(), "SteamGameBridge-Demo-" + Guid.NewGuid().ToString("N")), "state") : LocalEnvironment.StateDirectory;
         _store = new(_state);
-        Text = "SteamGameBridge · 0.2.0-dev" + (demo ? " · 只读演示" : "");
+        Text = "SteamGameBridge · " + Application.ProductVersion.Split('+')[0] + (demo ? " · 只读演示" : "");
         Font = new Font("Microsoft YaHei UI", 9.5f);
         ClientSize = new Size(1140, 850); MinimumSize = new Size(950, 730); StartPosition = FormStartPosition.CenterScreen;
         BuildUi();
