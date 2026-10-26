@@ -10,15 +10,20 @@ internal sealed class MainForm : Form
     private readonly string _state;
     private readonly ProfileStore _store;
     private readonly Func<bool> _protocolAvailable;
-    private readonly Icon _appIcon = AppIcon.Load();
-    private readonly ListBox _profiles = new() { Dock = DockStyle.Fill };
+    private readonly GameList _profiles = new();
     private readonly ComboBox _preset = Choice(), _mode = Choice(), _libraries = Choice(), _accounts = Choice(), _entries = Choice();
     private readonly TextBox _name = Input(), _appId = Input(), _steam = Input(), _game = Input(), _gameArgs = Input(), _launcher = Input(), _template = Input(), _starwardExe = Input();
     private readonly NumericUpDown _wait = new() { Minimum = 1, Maximum = 1800, Value = 180, Width = 100 };
     private readonly CheckBox _starward = new() { Text = "使用 Starward 记录时长", AutoSize = true };
-    private readonly CheckBox _maintenance = new() { Text = "在本工具运行期间维护此游戏（不随开机启动）", Checked = true, AutoSize = true };
+    private readonly CheckBox _maintenance = new() { Text = "退出 Steam 后自动维护", Checked = true, AutoSize = true };
     private readonly Label _starwardStatus = new() { AutoSize = true }, _mapping = new() { AutoSize = true, Text = "请获取或导入元数据" }, _status = new() { Dock = DockStyle.Fill, AutoEllipsis = true };
     private readonly TextBox _preview = Output(), _log = Output();
+    private readonly Dictionary<string, Control> _pages = [];
+    private readonly Dictionary<string, Button> _navigation = [];
+    private readonly Label _profileTitle = new() { AutoSize = true };
+    private readonly Label _feedback = new() { AutoEllipsis = true, Dock = DockStyle.Fill, ForeColor = UiTheme.Muted };
+    private readonly Label _emptyProfiles = new() { Text = "保存配置后，游戏会显示在这里", TextAlign = ContentAlignment.MiddleCenter, Dock = DockStyle.Fill, ForeColor = UiTheme.Muted };
+    private Control _launcherSection = null!, _starwardSection = null!;
     private readonly List<Button> _actions = [];
     private readonly List<Control> _editors = [];
     private readonly System.Windows.Forms.Timer _timer = new() { Interval = 10000 };
@@ -31,9 +36,9 @@ internal sealed class MainForm : Form
     private SteamAppMetadata? _metadata;
     private (string Helper, string Placeholder)? _tools;
     private Button _apply = null!, _repair = null!, _restore = null!, _launch = null!, _save = null!, _delete = null!;
-    private static TextBox Input() => new() { Dock = DockStyle.Fill };
-    private static TextBox Output() => new() { Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill, BackColor = Color.White };
-    private static ComboBox Choice() => new() { DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill };
+    private static TextBox Input() => new() { Anchor = AnchorStyles.Left | AnchorStyles.Right, BorderStyle = BorderStyle.FixedSingle, BackColor = Color.White, ForeColor = UiTheme.Ink, Margin = new Padding(0, 5, 0, 5) };
+    private static TextBox Output() => new() { Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill, BackColor = Color.White, BorderStyle = BorderStyle.None, ForeColor = UiTheme.Ink };
+    private static ComboBox Choice() => new() { DropDownStyle = ComboBoxStyle.DropDownList, Anchor = AnchorStyles.Left | AnchorStyles.Right, FlatStyle = FlatStyle.Flat, BackColor = Color.White, ForeColor = UiTheme.Ink, Margin = new Padding(0, 5, 0, 5) };
     private sealed record AccountRow(SteamAccount Value) { public override string ToString() => $"{Value.DisplayName} · {Value.AccountId}"; }
 
     public MainForm(bool demo, string? stateDirectory = null, Func<bool>? protocolAvailable = null)
@@ -44,8 +49,9 @@ internal sealed class MainForm : Form
         _store = new(_state);
         Text = "SteamGameBridge · " + Application.ProductVersion.Split('+')[0] + (demo ? " · 只读演示" : "");
         Font = new Font("Microsoft YaHei UI", 9.5f);
-        ClientSize = new Size(1140, 850); MinimumSize = new Size(950, 730); StartPosition = FormStartPosition.CenterScreen;
-        Icon = _appIcon; _tray.Icon = _appIcon;
+        ClientSize = new Size(1180, 820); MinimumSize = new Size(980, 720); StartPosition = FormStartPosition.CenterScreen;
+        ShowIcon = false; _tray.Icon = SystemIcons.Application;
+        BackColor = UiTheme.Canvas; ForeColor = UiTheme.Ink;
         DoubleBuffered = true;
         BuildUi();
         var menu = new ContextMenuStrip();
@@ -66,78 +72,133 @@ internal sealed class MainForm : Form
     {
         if (disposing) { _timer.Dispose(); _tray.Dispose(); }
         base.Dispose(disposing);
-        if (disposing) _appIcon.Dispose();
     }
 
-    private Button Action(string text, Func<Task> work)
+    private Button Action(string text, Func<Task> work, bool primary = false)
     {
-        var b = new Button { Text = text, AutoSize = true, Padding = new Padding(6, 2, 6, 2), Margin = new Padding(3) };
+        var b = new UiButton { Text = text, AutoSize = true, MinimumSize = new Size(0, 34), Padding = new Padding(10, 4, 10, 4), Margin = new Padding(0, 0, 8, 0) };
+        UiTheme.StyleButton(b, primary);
         b.Click += async (_, _) => await RunAsync(work); _actions.Add(b); return b;
     }
     private static Task Done(Action action) { action(); return Task.CompletedTask; }
     private void BuildUi()
     {
-        var root = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 4, Padding = new Padding(16) };
-        root.RowStyles.Add(new(SizeType.Absolute, 43)); root.RowStyles.Add(new(SizeType.Absolute, 58)); root.RowStyles.Add(new(SizeType.Percent, 100)); root.RowStyles.Add(new(SizeType.Absolute, 32));
-        root.Controls.Add(new Label { Text = "SteamGameBridge", Font = new Font(Font.FontFamily, 22, FontStyle.Bold), AutoSize = true }, 0, 0);
-        root.Controls.Add(new Label { Dock = DockStyle.Fill, Text = "把已有本地游戏接入 Steam 正式条目。先正常入库对应游戏。\n接入、修复或恢复前，请完全退出 Steam。", Padding = new Padding(4, 7, 4, 3), BackColor = Color.AliceBlue }, 0, 1);
-        var split = new SplitContainer { Dock = DockStyle.Fill, Size = new Size(1100, 650), FixedPanel = FixedPanel.Panel1, Panel1MinSize = 240, SplitterDistance = 260 };
-        var left = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2, ColumnCount = 1 };
-        left.RowStyles.Add(new(SizeType.Percent, 100)); left.RowStyles.Add(new(SizeType.Absolute, 44)); left.Controls.Add(_profiles, 0, 0);
-        var listButtons = new TableLayoutPanel { Name = "ProfileActions", Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 1 };
+        var root = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3, Padding = new Padding(22, 16, 22, 12), BackColor = UiTheme.Canvas };
+        root.ColumnStyles.Add(new(SizeType.Percent, 100));
+        root.RowStyles.Add(new(SizeType.Absolute, 76)); root.RowStyles.Add(new(SizeType.Percent, 100)); root.RowStyles.Add(new(SizeType.Absolute, 28));
+        var heading = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2, Margin = Padding.Empty };
+        heading.ColumnStyles.Add(new(SizeType.Percent, 100));
+        heading.RowStyles.Add(new(SizeType.Absolute, 37)); heading.RowStyles.Add(new(SizeType.Percent, 100));
+        heading.Controls.Add(new Label { Text = "SteamGameBridge", Font = new Font(Font.FontFamily, 20, FontStyle.Bold), AutoSize = true, Margin = Padding.Empty });
+        heading.Controls.Add(new Label { Text = "将本地游戏接入 Steam，管理启动与时长联动", ForeColor = UiTheme.Muted, AutoSize = true, Margin = new Padding(1, 3, 0, 0) });
+        root.Controls.Add(heading, 0, 0);
+        var split = new SplitContainer { Dock = DockStyle.Fill, Size = new Size(1120, 650), FixedPanel = FixedPanel.Panel1, Panel1MinSize = 240, SplitterDistance = 254, SplitterWidth = 16, BackColor = UiTheme.Canvas, Margin = Padding.Empty };
+        var sidebar = new SurfacePanel { Dock = DockStyle.Fill, Padding = new Padding(14) };
+        var left = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 3, ColumnCount = 1, BackColor = Color.White, Margin = Padding.Empty };
+        left.ColumnStyles.Add(new(SizeType.Percent, 100));
+        left.RowStyles.Add(new(SizeType.Absolute, 38)); left.RowStyles.Add(new(SizeType.Percent, 100)); left.RowStyles.Add(new(SizeType.Absolute, 42));
+        left.Controls.Add(new Label { Text = "我的游戏", Font = new Font(Font, FontStyle.Bold), AutoSize = true, Margin = new Padding(3, 2, 0, 0) }, 0, 0);
+        var listArea = new Panel { Dock = DockStyle.Fill, BackColor = Color.White, Margin = Padding.Empty };
+        listArea.Controls.Add(_profiles); listArea.Controls.Add(_emptyProfiles); _emptyProfiles.BringToFront(); left.Controls.Add(listArea, 0, 1);
+        var listButtons = new TableLayoutPanel { Name = "ProfileActions", Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 1, Margin = new Padding(0, 7, 0, 0) };
         for (int column = 0; column < 3; column++) listButtons.ColumnStyles.Add(new(SizeType.Percent, 100f / 3));
         listButtons.RowStyles.Add(new(SizeType.Percent, 100));
-        var add = Action("新增游戏", () => Done(NewProfile));
-        _save = Action("保存设置", SaveAsync); _delete = Action("删除设置", DeleteAsync);
+        var add = Action("新增", () => Done(NewProfile)); _save = Action("保存", SaveAsync); _delete = Action("删除", DeleteAsync);
         Button[] profileActions = [add, _save, _delete];
         for (int column = 0; column < profileActions.Length; column++)
         {
-            var button = profileActions[column];
-            button.AutoSize = false; button.Dock = DockStyle.Fill; button.Padding = new Padding(2);
+            var button = profileActions[column]; button.AutoSize = false; button.Dock = DockStyle.Fill;
+            button.Padding = new Padding(2); button.Margin = new Padding(column == 0 ? 0 : 3, 0, column == 2 ? 0 : 3, 0);
             listButtons.Controls.Add(button, column, 0);
         }
-        left.Controls.Add(listButtons, 0, 1); split.Panel1.Controls.Add(left);
-        var right = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 3, ColumnCount = 1 };
-        right.RowStyles.Add(new(SizeType.Percent, 100)); right.RowStyles.Add(new(SizeType.Absolute, 44)); right.RowStyles.Add(new(SizeType.Absolute, 72));
-        var tabs = new TabControl { Dock = DockStyle.Fill };
-        var settings = new TabPage("游戏设置") { AutoScroll = true };
-        var fields = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 3, Padding = new Padding(8) };
-        fields.ColumnStyles.Add(new(SizeType.AutoSize)); fields.ColumnStyles.Add(new(SizeType.Percent, 100)); fields.ColumnStyles.Add(new(SizeType.Absolute, 84));
-        void Row(string caption, Control value, Button? browse = null)
+        left.Controls.Add(listButtons, 0, 2); sidebar.Controls.Add(left); split.Panel1.Controls.Add(sidebar);
+        var detail = new SurfacePanel { Dock = DockStyle.Fill, Padding = new Padding(20, 14, 20, 12) };
+        var right = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 5, ColumnCount = 1, BackColor = Color.White, Margin = Padding.Empty };
+        right.ColumnStyles.Add(new(SizeType.Percent, 100));
+        foreach (var style in new[] { new RowStyle(SizeType.Absolute, 34), new RowStyle(SizeType.Absolute, 48), new RowStyle(SizeType.Percent, 100), new RowStyle(SizeType.Absolute, 50), new RowStyle(SizeType.Absolute, 76) }) right.RowStyles.Add(style);
+        _profileTitle.Font = new Font(Font.FontFamily, 12, FontStyle.Bold); _profileTitle.Margin = new Padding(2, 0, 0, 0); right.Controls.Add(_profileTitle, 0, 0);
+        var navigation = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false, BackColor = Color.White, Margin = Padding.Empty };
+        var pageHost = new Panel { Dock = DockStyle.Fill, BackColor = Color.White, Margin = Padding.Empty };
+        Panel Page(string key, string title)
         {
-            int row = fields.RowCount++; fields.RowStyles.Add(new(SizeType.Absolute, 36));
-            fields.Controls.Add(new Label { Text = caption, AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(3, 0, 16, 0) }, 0, row);
-            fields.Controls.Add(value, 1, row); if (browse is null) fields.SetColumnSpan(value, 2); else fields.Controls.Add(browse, 2, row);
+            var page = new Panel { Name = key, Text = title, Dock = DockStyle.Fill, AutoScroll = true, BackColor = Color.White, Padding = new Padding(2, 8, 12, 8), Visible = false };
+            _pages.Add(key, page); pageHost.Controls.Add(page);
+            var tab = new UiButton { Quiet = true, Text = title, AutoSize = true, Height = 34, Padding = new Padding(11, 5, 11, 5), Margin = new Padding(0, 0, 5, 0), FlatStyle = FlatStyle.Flat, Cursor = Cursors.Hand };
+            tab.FlatAppearance.BorderSize = 0; tab.Click += (_, _) => ShowPage(key); navigation.Controls.Add(tab); _navigation.Add(key, tab);
+            return page;
+        }
+        var settings = Page("GameSettings", "游戏设置"); var steam = Page("SteamSettings", "Steam 设置"); var integrations = Page("Integrations", "时长与维护");
+        var logs = Page("Logs", "运行日志"); var help = Page("Help", "使用说明");
+        TableLayoutPanel Content(Panel page)
+        {
+            var content = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 1, MaximumSize = new Size(980, 0), Margin = Padding.Empty };
+            content.ColumnStyles.Add(new(SizeType.Percent, 100)); page.Controls.Add(content); return content;
+        }
+        var gameContent = Content(settings); var steamContent = Content(steam); var integrationContent = Content(integrations);
+        TableLayoutPanel Section(TableLayoutPanel content, string title)
+        {
+            var section = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 3, Padding = new Padding(0, 4, 0, 14), Margin = new Padding(0, 0, 0, 10), RowCount = 1 };
+            section.ColumnStyles.Add(new(SizeType.AutoSize)); section.ColumnStyles.Add(new(SizeType.Percent, 100)); section.ColumnStyles.Add(new(SizeType.Absolute, 82));
+            section.RowStyles.Add(new(SizeType.Absolute, 34));
+            var label = new Label { Text = title, Font = new Font(Font, FontStyle.Bold), AutoSize = true, Margin = new Padding(0, 4, 0, 0) };
+            section.Controls.Add(label, 0, 0); section.SetColumnSpan(label, 3);
+            content.Controls.Add(section); return section;
+        }
+        void Row(TableLayoutPanel section, string caption, Control value, Button? browse = null)
+        {
+            int row = section.RowCount++; section.RowStyles.Add(new(SizeType.Absolute, 42));
+            section.Controls.Add(new Label { Text = caption, ForeColor = UiTheme.Muted, AutoSize = true, MinimumSize = new Size(146, 0), Anchor = AnchorStyles.Left, Margin = new Padding(0, 0, 14, 0) }, 0, row);
+            Control field = value is TextBox or ComboBox or NumericUpDown ? new FieldFrame(value) : value;
+            section.Controls.Add(field, 1, row); if (browse is null) section.SetColumnSpan(field, 2); else section.Controls.Add(browse, 2, row);
             if (value is not Label) _editors.Add(value); if (browse is not null) _editors.Add(browse);
         }
-        Button Picker(TextBox box, bool directory = false) => Action("选择…", () => Done(() =>
+        Button Picker(TextBox box, bool directory = false) => Action("选择", () => Done(() =>
         {
             if (directory) { using var d = new FolderBrowserDialog(); if (d.ShowDialog(this) == DialogResult.OK) { box.Text = d.SelectedPath; LoadSteamChoices(); } }
             else { using var d = new OpenFileDialog { Filter = "EXE 程序|*.exe" }; if (d.ShowDialog(this) == DialogResult.OK) box.Text = d.FileName; }
         }));
-        Row("配置名称", _name); Row("本地游戏预设", _preset); Row("Steam AppID", _appId);
-        Row("Steam 安装目录", _steam, Picker(_steam, true)); Row("游戏库", _libraries); Row("目标 Steam 账号", _accounts);
-        Row("实际游戏 EXE", _game, Picker(_game)); Row("游戏参数", _gameArgs); Row("启动方式", _mode);
-        Row("启动器 / 包装器", _launcher, Picker(_launcher)); Row("启动器参数模板", _template); Row("等待游戏（秒）", _wait);
-        Row("Steam 启动入口", _entries); Row("Starward 计时", _starward); Row("Starward EXE（可选）", _starwardExe, Picker(_starwardExe));
-        Row("计时接口状态", _starwardStatus); Row("自动维护", _maintenance);
-        settings.Controls.Add(fields); tabs.TabPages.Add(settings);
-        var evidence = new TabPage("接入预览与运行日志");
-        var evidenceLayout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2 };
-        evidenceLayout.RowStyles.Add(new(SizeType.Percent, 52)); evidenceLayout.RowStyles.Add(new(SizeType.Percent, 48));
-        evidenceLayout.Controls.Add(_preview, 0, 0); evidenceLayout.Controls.Add(_log, 0, 1); evidence.Controls.Add(evidenceLayout); tabs.TabPages.Add(evidence);
-        var help = new TabPage("使用说明");
-        help.Controls.Add(new TextBox { Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, Text = UserGuide.Text.ReplaceLineEndings("\r\n") }); tabs.TabPages.Add(help);
-        right.Controls.Add(tabs, 0, 0);
-        var metadataBar = new FlowLayoutPanel { Dock = DockStyle.Fill };
-        metadataBar.Controls.Add(Action("获取元数据", FetchAsync)); metadataBar.Controls.Add(Action("导入元数据", ImportAsync)); metadataBar.Controls.Add(_mapping); right.Controls.Add(metadataBar, 0, 1);
-        var operations = new FlowLayoutPanel { Dock = DockStyle.Fill };
-        _apply = Action("一键接入", ApplyAsync); _repair = Action("检查并修复", RepairAsync); _restore = Action("恢复", RestoreAsync); _launch = Action("从 Steam 启动", LaunchAsync);
-        operations.Controls.AddRange([_apply, _repair, _restore, _launch, Action("管理员打开 Steam", ElevateSteamAsync), Action("刷新预览", () => Done(UpdatePreview)), Action("打开备份", () => Done(() => { if (Directory.Exists(_state)) Process.Start(new ProcessStartInfo("explorer.exe", _state) { UseShellExecute = true }); })), Action("退出工具", () => Done(() => { _exit = true; Close(); }))]);
-        right.Controls.Add(operations, 0, 2); split.Panel2.Controls.Add(right); root.Controls.Add(split, 0, 2); root.Controls.Add(_status, 0, 3); Controls.Add(root);
+        var identity = Section(gameContent, "游戏信息"); Row(identity, "配置名称", _name); Row(identity, "本地游戏预设", _preset); Row(identity, "Steam AppID", _appId);
+        var local = Section(gameContent, "本地启动"); Row(local, "实际游戏 EXE", _game, Picker(_game)); Row(local, "启动方式", _mode); Row(local, "游戏参数", _gameArgs);
+        var launcher = Section(gameContent, "启动器选项"); _launcherSection = launcher;
+        Row(launcher, "启动器 / 包装器", _launcher, Picker(_launcher)); Row(launcher, "启动器参数模板", _template); Row(launcher, "等待游戏（秒）", _wait);
+        var binding = Section(steamContent, "Steam 账号与游戏库"); Row(binding, "Steam 安装目录", _steam, Picker(_steam, true)); Row(binding, "游戏库", _libraries); Row(binding, "目标 Steam 账号", _accounts); Row(binding, "Steam 启动入口", _entries);
+        var starward = Section(integrationContent, "Starward"); _starwardSection = starward;
+        Row(starward, "Starward 计时", _starward); Row(starward, "Starward EXE（可选）", _starwardExe, Picker(_starwardExe)); Row(starward, "计时接口状态", _starwardStatus);
+        var maintenance = Section(integrationContent, "维护"); Row(maintenance, "自动维护", _maintenance);
+        var evidence = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 4, Margin = Padding.Empty };
+        evidence.ColumnStyles.Add(new(SizeType.Percent, 100));
+        evidence.RowStyles.Add(new(SizeType.Absolute, 30)); evidence.RowStyles.Add(new(SizeType.Percent, 50)); evidence.RowStyles.Add(new(SizeType.Absolute, 38)); evidence.RowStyles.Add(new(SizeType.Percent, 50));
+        evidence.Controls.Add(new Label { Text = "接入预览", AutoSize = true, Font = new Font(Font, FontStyle.Bold) }, 0, 0); evidence.Controls.Add(_preview, 0, 1);
+        evidence.Controls.Add(new Label { Text = "运行记录", AutoSize = true, Font = new Font(Font, FontStyle.Bold), Padding = new Padding(0, 10, 0, 0) }, 0, 2); evidence.Controls.Add(_log, 0, 3); logs.Controls.Add(evidence);
+        help.Controls.Add(new TextBox { Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, BorderStyle = BorderStyle.None, BackColor = Color.White, ForeColor = UiTheme.Muted, ScrollBars = ScrollBars.Vertical, Text = UserGuide.Text.ReplaceLineEndings("\r\n") });
+        right.Controls.Add(navigation, 0, 1); right.Controls.Add(pageHost, 0, 2);
+        var metadataBar = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, Padding = new Padding(0, 8, 0, 0), Margin = Padding.Empty };
+        metadataBar.ColumnStyles.Add(new(SizeType.AutoSize)); metadataBar.ColumnStyles.Add(new(SizeType.Percent, 100));
+        var metadataButtons = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Dock = DockStyle.Fill, Margin = Padding.Empty };
+        metadataButtons.Controls.Add(Action("获取元数据", FetchAsync)); metadataButtons.Controls.Add(Action("导入", ImportAsync));
+        _mapping.AutoSize = false; _mapping.Dock = DockStyle.Fill; _mapping.AutoEllipsis = true; _mapping.TextAlign = ContentAlignment.MiddleLeft; _mapping.ForeColor = UiTheme.Muted;
+        metadataBar.Controls.Add(metadataButtons, 0, 0); metadataBar.Controls.Add(_mapping, 1, 0); right.Controls.Add(metadataBar, 0, 3);
+        var footer = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2, ColumnCount = 1, Margin = Padding.Empty };
+        footer.ColumnStyles.Add(new(SizeType.Percent, 100));
+        footer.RowStyles.Add(new(SizeType.Absolute, 42)); footer.RowStyles.Add(new(SizeType.Percent, 100));
+        var operations = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false, Margin = Padding.Empty };
+        _apply = Action("一键接入", ApplyAsync, primary: true); _launch = Action("从 Steam 启动", LaunchAsync); _repair = Action("检查修复", RepairAsync); _restore = Action("恢复", RestoreAsync);
+        var moreMenu = new ContextMenuStrip();
+        void More(string title, Func<Task> work) => moreMenu.Items.Add(title).Click += async (_, _) => await RunAsync(work);
+        More("管理员打开 Steam", ElevateSteamAsync); More("刷新预览", () => Done(UpdatePreview));
+        More("打开备份目录", () => Done(() => { if (Directory.Exists(_state)) Process.Start(new ProcessStartInfo("explorer.exe", _state) { UseShellExecute = true }); }));
+        More("退出工具", () => Done(() => { _exit = true; Close(); }));
+        var more = new UiButton { Text = "更多操作", AutoSize = true, MinimumSize = new Size(0, 34), Padding = new Padding(10, 4, 10, 4), Margin = new Padding(0, 0, 8, 0) };
+        UiTheme.StyleButton(more); _actions.Add(more); more.Click += (_, _) => moreMenu.Show(more, new Point(0, more.Height));
+        operations.Controls.AddRange([_apply, _launch, _repair, _restore, more]); footer.Controls.Add(operations, 0, 0); footer.Controls.Add(_feedback, 0, 1); right.Controls.Add(footer, 0, 4);
+        detail.Controls.Add(right); split.Panel2.Controls.Add(detail); root.Controls.Add(split, 0, 1);
+        _status.ForeColor = UiTheme.Muted; _status.TextAlign = ContentAlignment.MiddleLeft; _status.Margin = new Padding(3, 4, 0, 0); root.Controls.Add(_status, 0, 2); Controls.Add(root);
+        ShowPage("GameSettings");
         _preset.Items.AddRange(GamePreset.All.Cast<object>().ToArray()); _mode.Items.AddRange(["直接启动游戏", "官方启动器", "已有第三方包装器"]);
         _profiles.SelectedIndexChanged += (_, _) => { if (!_loading && !_working && _profiles.SelectedItem is GameProfile p) LoadProfile(p); };
         _preset.SelectedIndexChanged += (_, _) => { if (_loading) return; var p = SelectedPreset; if (_name.Text == "新游戏" || GamePreset.All.Any(x => x.Name == _name.Text)) _name.Text = p.Name; _appId.Text = p.AppId; _mode.SelectedIndex = (int)p.DefaultMode; _starward.Checked = p.StarwardBiz is not null && _protocolAvailable(); RefreshLocks(); };
+        _name.TextChanged += (_, _) => { if (!_loading) _profileTitle.Text = string.IsNullOrWhiteSpace(_name.Text) ? "新游戏配置" : _name.Text; };
+        _mode.SelectedIndexChanged += (_, _) => UpdateSections();
         _starward.CheckedChanged += (_, _) => { if (!_loading) UpdateStarwardState(); };
         _entries.SelectedIndexChanged += (_, _) => { if (!_loading && _json is not null) { try { ParseSelectedMetadata(); UpdatePreview(); } catch (Exception ex) { Log(ex.Message); } } };
         _maintenance.CheckedChanged += (_, _) =>
@@ -152,6 +213,26 @@ internal sealed class MainForm : Form
             catch (Exception ex) { Log(ex.Message); }
         };
         _appId.TextChanged += (_, _) => { if (!_loading) { _metadata = null; _json = null; _entries.Items.Clear(); _mapping.Text = "AppID 已改变，请重新获取元数据"; } };
+    }
+    private void ShowPage(string key)
+    {
+        foreach (var page in _pages) page.Value.Visible = page.Key == key;
+        _pages[key].BringToFront();
+        foreach (var item in _navigation)
+        {
+            bool selected = item.Key == key;
+            item.Value.BackColor = selected ? UiTheme.Selection : Color.White;
+            item.Value.ForeColor = selected ? UiTheme.Accent : UiTheme.Muted;
+        }
+    }
+    private void UpdateSections()
+    {
+        _launcherSection.Visible = _mode.SelectedIndex > 0;
+        _starwardSection.Visible = SelectedPreset.StarwardBiz is not null;
+    }
+    private void PresentError(string message)
+    {
+        _feedback.ForeColor = Color.FromArgb(181, 52, 64); _feedback.Text = message; Log(message);
     }
     private GamePreset SelectedPreset => _preset.SelectedItem as GamePreset ?? GamePreset.Find("custom");
     private Task InitializeAsync()
@@ -187,7 +268,7 @@ internal sealed class MainForm : Form
         _loading = true; _profiles.Items.Clear();
         foreach (var p in _store.Load()) _profiles.Items.Add(p);
         if (selectId is not null) for (int i = 0; i < _profiles.Items.Count; i++) if (((GameProfile)_profiles.Items[i]).Id == selectId) _profiles.SelectedIndex = i;
-        _loading = false;
+        _loading = false; _emptyProfiles.Visible = _profiles.Items.Count == 0;
     }
     private void LoadProfile(GameProfile p)
     {
@@ -255,7 +336,7 @@ internal sealed class MainForm : Form
         if (entries.Count == 1) _entries.SelectedIndex = 0; else if (previous is not null) _entries.SelectedItem = entries.FirstOrDefault(x => x.Id == previous);
         _loading = false;
         if (_entries.SelectedItem is SteamLaunchEntry) ParseSelectedMetadata();
-        else { _mapping.Text = "存在多个 Windows 入口，请在设置中选择"; Log(_mapping.Text); }
+        else { _mapping.Text = "请选择 Steam 启动入口"; ShowPage("SteamSettings"); Log(_mapping.Text); }
         return Task.CompletedTask;
     }
     private void ParseSelectedMetadata()
@@ -387,7 +468,9 @@ internal sealed class MainForm : Form
     {
         bool active = false;
         try { var saved = _store.Load().SingleOrDefault(x => x.Id == _profileId); active = saved is not null && Service(saved).ReadReceipt() is not null; } catch (Exception ex) { _status.Text = ex.Message; }
-        UpdateStarwardState();
+        UpdateStarwardState(); UpdateSections();
+        _profileTitle.Text = string.IsNullOrWhiteSpace(_name.Text) ? "新游戏配置" : _name.Text;
+        _emptyProfiles.Visible = _profiles.Items.Count == 0;
         foreach (var c in _editors) c.Enabled = !active && !_working;
         if (!active && !_working) _starward.Enabled = SelectedPreset.StarwardBiz is not null;
         _save.Enabled = _delete.Enabled = !_demo && !active && !_working;
@@ -398,11 +481,11 @@ internal sealed class MainForm : Form
     }
     private async Task RunAsync(Func<Task> action)
     {
-        if (_working) return; _working = true; foreach (var a in _actions) a.Enabled = false; _profiles.Enabled = false; foreach (var c in _editors) c.Enabled = false;
+        if (_working) return; _feedback.Text = ""; _working = true; foreach (var a in _actions) a.Enabled = false; _profiles.Enabled = false; foreach (var c in _editors) c.Enabled = false;
         try { await action(); }
-        catch (UnauthorizedAccessException) { Log("访问被拒绝。请以具有所选 Steam 目录权限的身份重新打开；工具不会尝试绕过权限。"); }
-        catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode == 1223) { Log("已取消 Windows 授权。"); }
-        catch (Exception ex) { Log(ex.Message); }
+        catch (UnauthorizedAccessException) { PresentError("访问被拒绝，请使用有权限的目录或以管理员身份打开。"); }
+        catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode == 1223) { PresentError("已取消 Windows 授权。"); }
+        catch (Exception ex) { PresentError(ex.Message); }
         finally { _working = false; foreach (var a in _actions) a.Enabled = true; RefreshLocks(); UpdatePreview(); }
     }
     private void Log(string message) => _log.AppendText($"{DateTime.Now:HH:mm:ss}  {message}\r\n");
