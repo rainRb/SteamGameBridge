@@ -70,6 +70,10 @@ try {
     }
 
     if ($RunTests) {
+        # Render isolated forms offscreen, without controlling desktop windows.
+        $uiArguments = @('run', '--project', 'tests/SteamGameBridge.Ui.Tests/SteamGameBridge.Ui.Tests.csproj', '-c', 'Release', '-r', 'win-x64', '-p:SelfContained=false', '--')
+        foreach ($mode in $modes) { $uiArguments += (Join-Path $artifactRoot "$mode/SteamGameBridge.exe") }
+        Invoke-DotNet -Arguments $uiArguments -LogName 'ui.txt'
         # Fixtures remain beneath this checkout. No real Steam or game process
         # is started, and no live Steam or game configuration is modified.
         Invoke-DotNet -Arguments @('run', '--project', 'tests/SteamGameBridge.Core.Tests/SteamGameBridge.Core.Tests.csproj', '-c', 'Release') -LogName 'core.txt'

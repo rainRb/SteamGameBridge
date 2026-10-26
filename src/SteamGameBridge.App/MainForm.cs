@@ -9,6 +9,8 @@ internal sealed class MainForm : Form
     private readonly bool _demo;
     private readonly string _state;
     private readonly ProfileStore _store;
+    private readonly Func<bool> _protocolAvailable;
+    private readonly Icon _appIcon = AppIcon.Load();
     private readonly ListBox _profiles = new() { Dock = DockStyle.Fill };
     private readonly ComboBox _preset = Choice(), _mode = Choice(), _libraries = Choice(), _accounts = Choice(), _entries = Choice();
     private readonly TextBox _name = Input(), _appId = Input(), _steam = Input(), _game = Input(), _gameArgs = Input(), _launcher = Input(), _template = Input(), _starwardExe = Input();
@@ -20,10 +22,10 @@ internal sealed class MainForm : Form
     private readonly List<Button> _actions = [];
     private readonly List<Control> _editors = [];
     private readonly System.Windows.Forms.Timer _timer = new() { Interval = 10000 };
-    private readonly NotifyIcon _tray = new() { Icon = SystemIcons.Application, Text = "SteamGameBridge" };
+    private readonly NotifyIcon _tray = new() { Text = "SteamGameBridge" };
     private readonly Dictionary<string, DateTimeOffset> _nextRepair = [];
     private readonly Dictionary<string, string> _lastLaunchStatus = [];
-    private bool _working, _loading, _exit;
+    private bool _working, _loading, _exit, _maintaining;
     private string _profileId = Guid.NewGuid().ToString("N");
     private string? _json;
     private SteamAppMetadata? _metadata;
@@ -34,14 +36,17 @@ internal sealed class MainForm : Form
     private static ComboBox Choice() => new() { DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill };
     private sealed record AccountRow(SteamAccount Value) { public override string ToString() => $"{Value.DisplayName} · {Value.AccountId}"; }
 
-    public MainForm(bool demo)
+    public MainForm(bool demo, string? stateDirectory = null, Func<bool>? protocolAvailable = null)
     {
         _demo = demo;
-        _state = demo ? Path.Combine(Environment.GetEnvironmentVariable("SGB_DEMO_ROOT") ?? Path.Combine(Path.GetTempPath(), "SteamGameBridge-Demo-" + Guid.NewGuid().ToString("N")), "state") : LocalEnvironment.StateDirectory;
+        _protocolAvailable = protocolAvailable ?? (() => new WindowsStarwardTransport().ProtocolAvailable);
+        _state = stateDirectory ?? (demo ? Path.Combine(Environment.GetEnvironmentVariable("SGB_DEMO_ROOT") ?? Path.Combine(Path.GetTempPath(), "SteamGameBridge-Demo-" + Guid.NewGuid().ToString("N")), "state") : LocalEnvironment.StateDirectory);
         _store = new(_state);
         Text = "SteamGameBridge · " + Application.ProductVersion.Split('+')[0] + (demo ? " · 只读演示" : "");
         Font = new Font("Microsoft YaHei UI", 9.5f);
         ClientSize = new Size(1140, 850); MinimumSize = new Size(950, 730); StartPosition = FormStartPosition.CenterScreen;
+        Icon = _appIcon; _tray.Icon = _appIcon;
+        DoubleBuffered = true;
         BuildUi();
         var menu = new ContextMenuStrip();
         menu.Items.Add("打开 SteamGameBridge", null, (_, _) => { Show(); WindowState = FormWindowState.Normal; Activate(); });
@@ -53,10 +58,17 @@ internal sealed class MainForm : Form
             if (!_exit && !_demo && e.CloseReason == CloseReason.UserClosing && _store.Load().Any(p => p.Maintain))
             { e.Cancel = true; Hide(); _tray.Visible = true; _tray.ShowBalloonTip(3000, "工具仍在托盘运行", "仅在 Steam 和对应游戏退出后维护。可在托盘菜单中完全退出。", ToolTipIcon.Info); }
         };
-        FormClosed += (_, _) => { _timer.Stop(); _tray.Dispose(); };
+        FormClosed += (_, _) => _timer.Stop();
         _timer.Tick += async (_, _) => await MaintainAsync();
         Shown += async (_, _) => await RunAsync(InitializeAsync);
     }
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing) { _timer.Dispose(); _tray.Dispose(); }
+        base.Dispose(disposing);
+        if (disposing) _appIcon.Dispose();
+    }
+
     private Button Action(string text, Func<Task> work)
     {
         var b = new Button { Text = text, AutoSize = true, Padding = new Padding(6, 2, 6, 2), Margin = new Padding(3) };
@@ -68,26 +80,35 @@ internal sealed class MainForm : Form
         var root = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 4, Padding = new Padding(16) };
         root.RowStyles.Add(new(SizeType.Absolute, 43)); root.RowStyles.Add(new(SizeType.Absolute, 58)); root.RowStyles.Add(new(SizeType.Percent, 100)); root.RowStyles.Add(new(SizeType.Absolute, 32));
         root.Controls.Add(new Label { Text = "SteamGameBridge", Font = new Font(Font.FontFamily, 22, FontStyle.Bold), AutoSize = true }, 0, 0);
-        root.Controls.Add(new Label { Dock = DockStyle.Fill, Text = "把已有本地游戏接入 Steam 正式条目。先正常入库对应游戏；接入、修复、恢复前完全退出 Steam。\nSteam 自身仍可能下载资源。运行状态、时长与 Overlay 需要分别实测。", Padding = new Padding(4, 7, 4, 3), BackColor = Color.AliceBlue }, 0, 1);
-        var split = new SplitContainer { Dock = DockStyle.Fill, Size = new Size(1100, 650), FixedPanel = FixedPanel.Panel1, SplitterDistance = 235 };
+        root.Controls.Add(new Label { Dock = DockStyle.Fill, Text = "把已有本地游戏接入 Steam 正式条目。先正常入库对应游戏。\n接入、修复或恢复前，请完全退出 Steam。", Padding = new Padding(4, 7, 4, 3), BackColor = Color.AliceBlue }, 0, 1);
+        var split = new SplitContainer { Dock = DockStyle.Fill, Size = new Size(1100, 650), FixedPanel = FixedPanel.Panel1, Panel1MinSize = 240, SplitterDistance = 260 };
         var left = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2, ColumnCount = 1 };
-        left.RowStyles.Add(new(SizeType.Percent, 100)); left.RowStyles.Add(new(SizeType.Absolute, 78)); left.Controls.Add(_profiles, 0, 0);
-        var listButtons = new FlowLayoutPanel { Dock = DockStyle.Fill };
-        listButtons.Controls.Add(Action("新增游戏", () => Done(NewProfile)));
-        _save = Action("保存设置", SaveAsync); _delete = Action("删除设置", DeleteAsync); listButtons.Controls.AddRange([_save, _delete]);
+        left.RowStyles.Add(new(SizeType.Percent, 100)); left.RowStyles.Add(new(SizeType.Absolute, 44)); left.Controls.Add(_profiles, 0, 0);
+        var listButtons = new TableLayoutPanel { Name = "ProfileActions", Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 1 };
+        for (int column = 0; column < 3; column++) listButtons.ColumnStyles.Add(new(SizeType.Percent, 100f / 3));
+        listButtons.RowStyles.Add(new(SizeType.Percent, 100));
+        var add = Action("新增游戏", () => Done(NewProfile));
+        _save = Action("保存设置", SaveAsync); _delete = Action("删除设置", DeleteAsync);
+        Button[] profileActions = [add, _save, _delete];
+        for (int column = 0; column < profileActions.Length; column++)
+        {
+            var button = profileActions[column];
+            button.AutoSize = false; button.Dock = DockStyle.Fill; button.Padding = new Padding(2);
+            listButtons.Controls.Add(button, column, 0);
+        }
         left.Controls.Add(listButtons, 0, 1); split.Panel1.Controls.Add(left);
         var right = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 3, ColumnCount = 1 };
         right.RowStyles.Add(new(SizeType.Percent, 100)); right.RowStyles.Add(new(SizeType.Absolute, 44)); right.RowStyles.Add(new(SizeType.Absolute, 72));
         var tabs = new TabControl { Dock = DockStyle.Fill };
         var settings = new TabPage("游戏设置") { AutoScroll = true };
         var fields = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 3, Padding = new Padding(8) };
-        fields.ColumnStyles.Add(new(SizeType.Absolute, 125)); fields.ColumnStyles.Add(new(SizeType.Percent, 100)); fields.ColumnStyles.Add(new(SizeType.Absolute, 84));
+        fields.ColumnStyles.Add(new(SizeType.AutoSize)); fields.ColumnStyles.Add(new(SizeType.Percent, 100)); fields.ColumnStyles.Add(new(SizeType.Absolute, 84));
         void Row(string caption, Control value, Button? browse = null)
         {
             int row = fields.RowCount++; fields.RowStyles.Add(new(SizeType.Absolute, 36));
-            fields.Controls.Add(new Label { Text = caption, AutoSize = true, Anchor = AnchorStyles.Left }, 0, row);
+            fields.Controls.Add(new Label { Text = caption, AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(3, 0, 16, 0) }, 0, row);
             fields.Controls.Add(value, 1, row); if (browse is null) fields.SetColumnSpan(value, 2); else fields.Controls.Add(browse, 2, row);
-            _editors.Add(value); if (browse is not null) _editors.Add(browse);
+            if (value is not Label) _editors.Add(value); if (browse is not null) _editors.Add(browse);
         }
         Button Picker(TextBox box, bool directory = false) => Action("选择…", () => Done(() =>
         {
@@ -106,7 +127,7 @@ internal sealed class MainForm : Form
         evidenceLayout.RowStyles.Add(new(SizeType.Percent, 52)); evidenceLayout.RowStyles.Add(new(SizeType.Percent, 48));
         evidenceLayout.Controls.Add(_preview, 0, 0); evidenceLayout.Controls.Add(_log, 0, 1); evidence.Controls.Add(evidenceLayout); tabs.TabPages.Add(evidence);
         var help = new TabPage("使用说明");
-        help.Controls.Add(new TextBox { Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, Text = "1. 新增游戏，选择本地预设；Steam AppID 可以修改。\r\n2. 选择真正的游戏 EXE，选择游戏库与账号。\r\n3. 官方启动器模式分别选择启动器与游戏；打开后可手动点击开始。\r\n4. 包装器的参数模板支持独立参数 {game}、{gameArgs}、{steamCommand}。\r\n   Better Endfield 示例：--hide-console --game {game} -- {gameArgs} --steam-command {steamCommand}\r\n   只有显式填写 {steamCommand} 才会向启动器/包装器转交 Steam 原始命令。\r\n5. 获取元数据；多个 Windows 启动入口需自行选择。\r\n6. 完全退出 Steam 后一键接入，检查原启动项及最终参数。\r\n7. 重新打开 Steam，登录所选账号，从正式游戏条目启动。\r\n8. 有需要时恢复，再编辑设置重新接入。\r\n\r\n绝区零/崩坏3可交给 Starward 记录时长。选择的是本地国服预设，不由 Steam AppID 推断。\r\n已发送请求不代表记录成功，请在 Starward 自行验收。\r\n启动失败不会终止游戏或启动器。不要保存登录票据、authkey 或其他敏感参数。\r\n\r\n关闭窗口后，启用维护的配置会在托盘继续工作；没有开机自启动。" }); tabs.TabPages.Add(help);
+        help.Controls.Add(new TextBox { Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, Text = UserGuide.Text.ReplaceLineEndings("\r\n") }); tabs.TabPages.Add(help);
         right.Controls.Add(tabs, 0, 0);
         var metadataBar = new FlowLayoutPanel { Dock = DockStyle.Fill };
         metadataBar.Controls.Add(Action("获取元数据", FetchAsync)); metadataBar.Controls.Add(Action("导入元数据", ImportAsync)); metadataBar.Controls.Add(_mapping); right.Controls.Add(metadataBar, 0, 1);
@@ -116,7 +137,8 @@ internal sealed class MainForm : Form
         right.Controls.Add(operations, 0, 2); split.Panel2.Controls.Add(right); root.Controls.Add(split, 0, 2); root.Controls.Add(_status, 0, 3); Controls.Add(root);
         _preset.Items.AddRange(GamePreset.All.Cast<object>().ToArray()); _mode.Items.AddRange(["直接启动游戏", "官方启动器", "已有第三方包装器"]);
         _profiles.SelectedIndexChanged += (_, _) => { if (!_loading && !_working && _profiles.SelectedItem is GameProfile p) LoadProfile(p); };
-        _preset.SelectedIndexChanged += (_, _) => { if (_loading) return; var p = SelectedPreset; if (_name.Text == "新游戏" || GamePreset.All.Any(x => x.Name == _name.Text)) _name.Text = p.Name; _appId.Text = p.AppId; _mode.SelectedIndex = (int)p.DefaultMode; _starward.Checked = p.StarwardBiz is not null && new WindowsStarwardTransport().ProtocolAvailable; UpdateStarwardState(); };
+        _preset.SelectedIndexChanged += (_, _) => { if (_loading) return; var p = SelectedPreset; if (_name.Text == "新游戏" || GamePreset.All.Any(x => x.Name == _name.Text)) _name.Text = p.Name; _appId.Text = p.AppId; _mode.SelectedIndex = (int)p.DefaultMode; _starward.Checked = p.StarwardBiz is not null && _protocolAvailable(); RefreshLocks(); };
+        _starward.CheckedChanged += (_, _) => { if (!_loading) UpdateStarwardState(); };
         _entries.SelectedIndexChanged += (_, _) => { if (!_loading && _json is not null) { try { ParseSelectedMetadata(); UpdatePreview(); } catch (Exception ex) { Log(ex.Message); } } };
         _maintenance.CheckedChanged += (_, _) =>
         {
@@ -280,11 +302,13 @@ internal sealed class MainForm : Form
     }
     private async Task MaintainAsync()
     {
-        if (_working || _demo) return;
-        await RunAsync(async () =>
+        if (_working || _maintaining || _demo) return;
+        _maintaining = true;
+        try
         {
             foreach (var p in _store.Load())
             {
+                if (_working || IsDisposed) return;
                 try
                 {
                     var service = Service(p); var receipt = service.ReadReceipt(); if (receipt is null) continue;
@@ -292,17 +316,33 @@ internal sealed class MainForm : Form
                     if (File.Exists(statusFile))
                     {
                         string text = File.ReadAllText(statusFile);
-                        if (_lastLaunchStatus.GetValueOrDefault(p.Id) != text) { var status = JsonSerializer.Deserialize<LaunchStatus>(text); if (status is not null) Log(p.Name + "：" + status.Message); _lastLaunchStatus[p.Id] = text; }
+                        if (_lastLaunchStatus.GetValueOrDefault(p.Id) != text)
+                        {
+                            var status = JsonSerializer.Deserialize<LaunchStatus>(text);
+                            if (status is not null) Log(p.Name + "：" + status.Message);
+                            _lastLaunchStatus[p.Id] = text;
+                            if (p.Id == _profileId) UpdateStarwardState();
+                        }
                     }
                     if (LocalEnvironment.Busy(p)) { _nextRepair[p.Id] = DateTimeOffset.MinValue; continue; }
                     if (!p.Maintain || _nextRepair.GetValueOrDefault(p.Id) > DateTimeOffset.Now) continue;
                     _nextRepair[p.Id] = DateTimeOffset.Now.AddMinutes(5);
                     var metadata = SteamAppMetadata.ParseApiSteamCmdJson(await DownloadAsync(p.AppId), p.AppId, receipt.Metadata.LaunchId);
-                    service.Repair(metadata); _nextRepair[p.Id] = DateTimeOffset.MaxValue; Log(p.Name + "：托盘维护完成。");
+                    if (_working || IsDisposed) return;
+                    // Ordinary polling never disables or redraws the editor. Only an actual
+                    // repair enters the foreground operation guard after metadata is ready.
+                    await RunAsync(() => Done(() =>
+                    {
+                        service.Repair(metadata); _nextRepair[p.Id] = DateTimeOffset.MaxValue;
+                        Log(p.Name + "：托盘维护完成。");
+                    }));
                 }
                 catch (Exception ex) { _nextRepair[p.Id] = DateTimeOffset.Now.AddMinutes(5); Log(p.Name + "：维护停止，" + ex.Message); }
             }
-        });
+            if (!_working && !IsDisposed) UpdateStarwardState();
+        }
+        catch (Exception ex) { Log("维护检查：" + ex.Message); }
+        finally { _maintaining = false; }
     }
     private void UpdatePreview()
     {
@@ -320,24 +360,28 @@ internal sealed class MainForm : Form
     }
     private void UpdateStarwardState()
     {
-        bool supported = SelectedPreset.StarwardBiz is not null; _starward.Enabled = supported;
-        if (!supported) _starward.Checked = false;
-        _starwardStatus.Text = !supported ? "此预设不启用" : new WindowsStarwardTransport().ProtocolAvailable ? "协议可用（不代表已记录）" : "协议不可用；可指定 Starward EXE";
-        if (supported && !_starward.Checked) { _starwardStatus.Text = "已关闭 Starward 计时"; return; }
-        if (_demo || !supported) return;
-        try
+        bool supported = SelectedPreset.StarwardBiz is not null;
+        string text = !supported ? "此预设不启用" : !_starward.Checked ? "已关闭 Starward 计时"
+            : _protocolAvailable() ? "协议可用" : "协议不可用；可指定 Starward EXE";
+        if (!_demo && supported && _starward.Checked)
         {
-            var p = _store.Load().SingleOrDefault(x => x.Id == _profileId);
-            if (p is null) return;
-            string file = Path.Combine(Service(p).State, "launch-status.json"); LocalEnvironment.GuardPath(file);
-            if (File.Exists(file) && new FileInfo(file).Length < 128 * 1024)
+            try
             {
-                var status = JsonSerializer.Deserialize<LaunchStatus>(File.ReadAllBytes(file));
-                if (status?.StarwardState == "sent") _starwardStatus.Text = "已发送计时请求（未确认记录）";
-                if (status?.StarwardState == "unavailable") _starwardStatus.Text = "不可用，计时未确认；游戏继续";
+                var p = _store.Load().SingleOrDefault(x => x.Id == _profileId);
+                if (p is not null)
+                {
+                    string file = Path.Combine(Service(p).State, "launch-status.json"); LocalEnvironment.GuardPath(file);
+                    if (File.Exists(file) && new FileInfo(file).Length < 128 * 1024)
+                    {
+                        var status = JsonSerializer.Deserialize<LaunchStatus>(File.ReadAllBytes(file));
+                        if (status?.StarwardState == "sent") text = "已发送计时请求";
+                        if (status?.StarwardState == "unavailable") text = "Starward 不可用";
+                    }
+                }
             }
+            catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException) { }
         }
-        catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException) { }
+        if (_starwardStatus.Text != text) _starwardStatus.Text = text;
     }
     private void RefreshLocks()
     {
