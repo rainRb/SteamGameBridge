@@ -9,7 +9,6 @@
   <ItemGroup>
     <Compile Include="../../src/SteamGameBridge.App/*.cs" Exclude="../../src/SteamGameBridge.App/Program.cs" Link="App/%(Filename)%(Extension)" />
     <ProjectReference Include="../../src/SteamGameBridge.Core/SteamGameBridge.Core.csproj" />
-    <EmbeddedResource Include="../../assets/SteamGameBridge.ico" LogicalName="SteamGameBridge.ico" />
     <EmbeddedResource Include="../../assets/SteamPlaceholder.exe" LogicalName="SteamPlaceholder.exe" />
   </ItemGroup>
 </Project>
