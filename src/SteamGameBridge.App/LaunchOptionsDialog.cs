@@ -9,14 +9,16 @@ internal sealed class LaunchOptionsDialog : Form
     private readonly RadioButton replace = new() { Text = "完全替换启动项", AutoSize = true };
     private readonly TextBox arguments = new() { Dock = DockStyle.Fill };
     private readonly Label note = new() { AutoSize = true, Dock = DockStyle.Fill };
+    private readonly WindowsThemeBinding themeBinding;
     private readonly string configured;
     private readonly string? original;
     public ExistingLaunchOptionsAction SelectedAction => keep.Checked ? ExistingLaunchOptionsAction.Keep : preserve.Checked ? ExistingLaunchOptionsAction.PreserveArguments : ExistingLaunchOptionsAction.Replace;
     public string GameArguments => arguments.Text;
 
-    public LaunchOptionsDialog(string? original, string configuredArguments, string command)
+    public LaunchOptionsDialog(string? original, string configuredArguments, string command, Func<bool>? darkMode = null)
     {
         this.original = original; configured = configuredArguments;
+        ShowIcon = false;
         Text = "检查原启动项与最终参数"; Font = new Font("Microsoft YaHei UI", 9.5f);
         ClientSize = new Size(790, 590); MinimumSize = new Size(660, 570); StartPosition = FormStartPosition.CenterParent;
         var root = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 9, Padding = new Padding(16) };
@@ -29,7 +31,8 @@ internal sealed class LaunchOptionsDialog : Form
         root.Controls.Add(new Label { Text = "预计 Steam 启动项（参数保存在对应配置中）", AutoSize = true }, 0, 6);
         root.Controls.Add(new TextBox { Text = command, Multiline = true, ReadOnly = true, Dock = DockStyle.Fill, ScrollBars = ScrollBars.Vertical }, 0, 7);
         var buttons = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft };
-        var confirm = new Button { Text = "确认此选择", AutoSize = true }; var cancel = new Button { Text = "取消", DialogResult = DialogResult.Cancel, AutoSize = true };
+        var confirm = new UiButton { Text = "确认此选择", AutoSize = true }; var cancel = new UiButton { Text = "取消", DialogResult = DialogResult.Cancel, AutoSize = true };
+        UiTheme.StyleButton(confirm, primary: true); UiTheme.StyleButton(cancel);
         buttons.Controls.AddRange([confirm, cancel]); root.Controls.Add(buttons, 0, 8); Controls.Add(root); CancelButton = cancel;
         confirm.Click += (_, _) =>
         {
@@ -39,6 +42,12 @@ internal sealed class LaunchOptionsDialog : Form
         foreach (var option in new[] { keep, preserve, replace }) option.CheckedChanged += (_, _) => UpdateArguments();
         if (string.IsNullOrWhiteSpace(original)) replace.Checked = true;
         UpdateArguments();
+        themeBinding = new WindowsThemeBinding(this, darkMode);
+    }
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing) themeBinding?.Dispose();
+        base.Dispose(disposing);
     }
     private void UpdateArguments()
     {

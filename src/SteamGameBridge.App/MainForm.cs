@@ -9,6 +9,7 @@ internal sealed class MainForm : Form
     private readonly bool _demo;
     private readonly string _state;
     private readonly ProfileStore _store;
+    private readonly WindowsThemeBinding _themeBinding;
     private readonly Func<bool> _protocolAvailable;
     private readonly GameList _profiles = new();
     private readonly ComboBox _preset = Choice(), _mode = Choice(), _libraries = Choice(), _accounts = Choice(), _entries = Choice();
@@ -21,8 +22,8 @@ internal sealed class MainForm : Form
     private readonly Dictionary<string, Control> _pages = [];
     private readonly Dictionary<string, Button> _navigation = [];
     private readonly Label _profileTitle = new() { AutoSize = true };
-    private readonly Label _feedback = new() { AutoEllipsis = true, Dock = DockStyle.Fill, ForeColor = UiTheme.Muted };
-    private readonly Label _emptyProfiles = new() { Text = "保存配置后，游戏会显示在这里", TextAlign = ContentAlignment.MiddleCenter, Dock = DockStyle.Fill, ForeColor = UiTheme.Muted };
+    private readonly Label _feedback = new() { AutoEllipsis = true, Dock = DockStyle.Fill, ForeColor = UiTheme.Muted, Tag = ThemeTone.Muted };
+    private readonly Label _emptyProfiles = new() { Text = "保存配置后，游戏会显示在这里", TextAlign = ContentAlignment.MiddleCenter, Dock = DockStyle.Fill, ForeColor = UiTheme.Muted, Tag = ThemeTone.Muted };
     private Control _launcherSection = null!, _starwardSection = null!;
     private readonly List<Button> _actions = [];
     private readonly List<Control> _editors = [];
@@ -36,12 +37,12 @@ internal sealed class MainForm : Form
     private SteamAppMetadata? _metadata;
     private (string Helper, string Placeholder)? _tools;
     private Button _apply = null!, _repair = null!, _restore = null!, _launch = null!, _save = null!, _delete = null!;
-    private static TextBox Input() => new() { Anchor = AnchorStyles.Left | AnchorStyles.Right, BorderStyle = BorderStyle.FixedSingle, BackColor = Color.White, ForeColor = UiTheme.Ink, Margin = new Padding(0, 5, 0, 5) };
-    private static TextBox Output() => new() { Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill, BackColor = Color.White, BorderStyle = BorderStyle.None, ForeColor = UiTheme.Ink };
-    private static ComboBox Choice() => new() { DropDownStyle = ComboBoxStyle.DropDownList, Anchor = AnchorStyles.Left | AnchorStyles.Right, FlatStyle = FlatStyle.Flat, BackColor = Color.White, ForeColor = UiTheme.Ink, Margin = new Padding(0, 5, 0, 5) };
+    private static TextBox Input() => new() { Anchor = AnchorStyles.Left | AnchorStyles.Right, BorderStyle = BorderStyle.FixedSingle, BackColor = UiTheme.Input, ForeColor = UiTheme.Ink, Margin = new Padding(0, 5, 0, 5) };
+    private static TextBox Output() => new() { Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill, BackColor = UiTheme.Surface, BorderStyle = BorderStyle.None, ForeColor = UiTheme.Ink };
+    private static ComboBox Choice() => new() { DropDownStyle = ComboBoxStyle.DropDownList, Anchor = AnchorStyles.Left | AnchorStyles.Right, FlatStyle = FlatStyle.Flat, BackColor = UiTheme.Input, ForeColor = UiTheme.Ink, Margin = new Padding(0, 5, 0, 5) };
     private sealed record AccountRow(SteamAccount Value) { public override string ToString() => $"{Value.DisplayName} · {Value.AccountId}"; }
 
-    public MainForm(bool demo, string? stateDirectory = null, Func<bool>? protocolAvailable = null)
+    public MainForm(bool demo, string? stateDirectory = null, Func<bool>? protocolAvailable = null, Func<bool>? darkMode = null)
     {
         _demo = demo;
         _protocolAvailable = protocolAvailable ?? (() => new WindowsStarwardTransport().ProtocolAvailable);
@@ -66,11 +67,12 @@ internal sealed class MainForm : Form
         };
         FormClosed += (_, _) => _timer.Stop();
         _timer.Tick += async (_, _) => await MaintainAsync();
+        _themeBinding = new WindowsThemeBinding(this, darkMode, menu);
         Shown += async (_, _) => await RunAsync(InitializeAsync);
     }
     protected override void Dispose(bool disposing)
     {
-        if (disposing) { _timer.Dispose(); _tray.Dispose(); }
+        if (disposing) { _themeBinding?.Dispose(); _timer.Dispose(); _tray.Dispose(); }
         base.Dispose(disposing);
     }
 
@@ -90,15 +92,15 @@ internal sealed class MainForm : Form
         heading.ColumnStyles.Add(new(SizeType.Percent, 100));
         heading.RowStyles.Add(new(SizeType.Absolute, 37)); heading.RowStyles.Add(new(SizeType.Percent, 100));
         heading.Controls.Add(new Label { Text = "SteamGameBridge", Font = new Font(Font.FontFamily, 20, FontStyle.Bold), AutoSize = true, Margin = Padding.Empty });
-        heading.Controls.Add(new Label { Text = "将本地游戏接入 Steam，管理启动与时长联动", ForeColor = UiTheme.Muted, AutoSize = true, Margin = new Padding(1, 3, 0, 0) });
+        heading.Controls.Add(new Label { Text = "将本地游戏接入 Steam，管理启动与时长联动", ForeColor = UiTheme.Muted, Tag = ThemeTone.Muted, AutoSize = true, Margin = new Padding(1, 3, 0, 0) });
         root.Controls.Add(heading, 0, 0);
         var split = new SplitContainer { Dock = DockStyle.Fill, Size = new Size(1120, 650), FixedPanel = FixedPanel.Panel1, Panel1MinSize = 240, SplitterDistance = 254, SplitterWidth = 16, BackColor = UiTheme.Canvas, Margin = Padding.Empty };
         var sidebar = new SurfacePanel { Dock = DockStyle.Fill, Padding = new Padding(14) };
-        var left = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 3, ColumnCount = 1, BackColor = Color.White, Margin = Padding.Empty };
+        var left = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 3, ColumnCount = 1, BackColor = UiTheme.Surface, Margin = Padding.Empty };
         left.ColumnStyles.Add(new(SizeType.Percent, 100));
         left.RowStyles.Add(new(SizeType.Absolute, 38)); left.RowStyles.Add(new(SizeType.Percent, 100)); left.RowStyles.Add(new(SizeType.Absolute, 42));
         left.Controls.Add(new Label { Text = "我的游戏", Font = new Font(Font, FontStyle.Bold), AutoSize = true, Margin = new Padding(3, 2, 0, 0) }, 0, 0);
-        var listArea = new Panel { Dock = DockStyle.Fill, BackColor = Color.White, Margin = Padding.Empty };
+        var listArea = new Panel { Dock = DockStyle.Fill, BackColor = UiTheme.Surface, Margin = Padding.Empty };
         listArea.Controls.Add(_profiles); listArea.Controls.Add(_emptyProfiles); _emptyProfiles.BringToFront(); left.Controls.Add(listArea, 0, 1);
         var listButtons = new TableLayoutPanel { Name = "ProfileActions", Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 1, Margin = new Padding(0, 7, 0, 0) };
         for (int column = 0; column < 3; column++) listButtons.ColumnStyles.Add(new(SizeType.Percent, 100f / 3));
@@ -113,15 +115,15 @@ internal sealed class MainForm : Form
         }
         left.Controls.Add(listButtons, 0, 2); sidebar.Controls.Add(left); split.Panel1.Controls.Add(sidebar);
         var detail = new SurfacePanel { Dock = DockStyle.Fill, Padding = new Padding(20, 14, 20, 12) };
-        var right = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 5, ColumnCount = 1, BackColor = Color.White, Margin = Padding.Empty };
+        var right = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 5, ColumnCount = 1, BackColor = UiTheme.Surface, Margin = Padding.Empty };
         right.ColumnStyles.Add(new(SizeType.Percent, 100));
         foreach (var style in new[] { new RowStyle(SizeType.Absolute, 34), new RowStyle(SizeType.Absolute, 48), new RowStyle(SizeType.Percent, 100), new RowStyle(SizeType.Absolute, 50), new RowStyle(SizeType.Absolute, 76) }) right.RowStyles.Add(style);
         _profileTitle.Font = new Font(Font.FontFamily, 12, FontStyle.Bold); _profileTitle.Margin = new Padding(2, 0, 0, 0); right.Controls.Add(_profileTitle, 0, 0);
-        var navigation = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false, BackColor = Color.White, Margin = Padding.Empty };
-        var pageHost = new Panel { Dock = DockStyle.Fill, BackColor = Color.White, Margin = Padding.Empty };
+        var navigation = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false, BackColor = UiTheme.Surface, Margin = Padding.Empty };
+        var pageHost = new Panel { Dock = DockStyle.Fill, BackColor = UiTheme.Surface, Margin = Padding.Empty };
         Panel Page(string key, string title)
         {
-            var page = new Panel { Name = key, Text = title, Dock = DockStyle.Fill, AutoScroll = true, BackColor = Color.White, Padding = new Padding(2, 8, 12, 8), Visible = false };
+            var page = new Panel { Name = key, Text = title, Dock = DockStyle.Fill, AutoScroll = true, BackColor = UiTheme.Surface, Padding = new Padding(2, 8, 12, 8), Visible = false };
             _pages.Add(key, page); pageHost.Controls.Add(page);
             var tab = new UiButton { Quiet = true, Text = title, AutoSize = true, Height = 34, Padding = new Padding(11, 5, 11, 5), Margin = new Padding(0, 0, 5, 0), FlatStyle = FlatStyle.Flat, Cursor = Cursors.Hand };
             tab.FlatAppearance.BorderSize = 0; tab.Click += (_, _) => ShowPage(key); navigation.Controls.Add(tab); _navigation.Add(key, tab);
@@ -147,7 +149,7 @@ internal sealed class MainForm : Form
         void Row(TableLayoutPanel section, string caption, Control value, Button? browse = null)
         {
             int row = section.RowCount++; section.RowStyles.Add(new(SizeType.Absolute, 42));
-            section.Controls.Add(new Label { Text = caption, ForeColor = UiTheme.Muted, AutoSize = true, MinimumSize = new Size(146, 0), Anchor = AnchorStyles.Left, Margin = new Padding(0, 0, 14, 0) }, 0, row);
+            section.Controls.Add(new Label { Text = caption, ForeColor = UiTheme.Muted, Tag = ThemeTone.Muted, AutoSize = true, MinimumSize = new Size(146, 0), Anchor = AnchorStyles.Left, Margin = new Padding(0, 0, 14, 0) }, 0, row);
             Control field = value is TextBox or ComboBox or NumericUpDown ? new FieldFrame(value) : value;
             section.Controls.Add(field, 1, row); if (browse is null) section.SetColumnSpan(field, 2); else section.Controls.Add(browse, 2, row);
             if (value is not Label) _editors.Add(value); if (browse is not null) _editors.Add(browse);
@@ -170,13 +172,13 @@ internal sealed class MainForm : Form
         evidence.RowStyles.Add(new(SizeType.Absolute, 30)); evidence.RowStyles.Add(new(SizeType.Percent, 50)); evidence.RowStyles.Add(new(SizeType.Absolute, 38)); evidence.RowStyles.Add(new(SizeType.Percent, 50));
         evidence.Controls.Add(new Label { Text = "接入预览", AutoSize = true, Font = new Font(Font, FontStyle.Bold) }, 0, 0); evidence.Controls.Add(_preview, 0, 1);
         evidence.Controls.Add(new Label { Text = "运行记录", AutoSize = true, Font = new Font(Font, FontStyle.Bold), Padding = new Padding(0, 10, 0, 0) }, 0, 2); evidence.Controls.Add(_log, 0, 3); logs.Controls.Add(evidence);
-        help.Controls.Add(new TextBox { Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, BorderStyle = BorderStyle.None, BackColor = Color.White, ForeColor = UiTheme.Muted, ScrollBars = ScrollBars.Vertical, Text = UserGuide.Text.ReplaceLineEndings("\r\n") });
+        help.Controls.Add(new TextBox { Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, BorderStyle = BorderStyle.None, BackColor = UiTheme.Surface, ForeColor = UiTheme.Muted, Tag = ThemeTone.Muted, ScrollBars = ScrollBars.Vertical, Text = UserGuide.Text.ReplaceLineEndings("\r\n") });
         right.Controls.Add(navigation, 0, 1); right.Controls.Add(pageHost, 0, 2);
         var metadataBar = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, Padding = new Padding(0, 8, 0, 0), Margin = Padding.Empty };
         metadataBar.ColumnStyles.Add(new(SizeType.AutoSize)); metadataBar.ColumnStyles.Add(new(SizeType.Percent, 100));
         var metadataButtons = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Dock = DockStyle.Fill, Margin = Padding.Empty };
         metadataButtons.Controls.Add(Action("获取元数据", FetchAsync)); metadataButtons.Controls.Add(Action("导入", ImportAsync));
-        _mapping.AutoSize = false; _mapping.Dock = DockStyle.Fill; _mapping.AutoEllipsis = true; _mapping.TextAlign = ContentAlignment.MiddleLeft; _mapping.ForeColor = UiTheme.Muted;
+        _mapping.AutoSize = false; _mapping.Dock = DockStyle.Fill; _mapping.AutoEllipsis = true; _mapping.TextAlign = ContentAlignment.MiddleLeft; _mapping.ForeColor = UiTheme.Muted; _mapping.Tag = ThemeTone.Muted;
         metadataBar.Controls.Add(metadataButtons, 0, 0); metadataBar.Controls.Add(_mapping, 1, 0); right.Controls.Add(metadataBar, 0, 3);
         var footer = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2, ColumnCount = 1, Margin = Padding.Empty };
         footer.ColumnStyles.Add(new(SizeType.Percent, 100));
@@ -189,10 +191,10 @@ internal sealed class MainForm : Form
         More("打开备份目录", () => Done(() => { if (Directory.Exists(_state)) Process.Start(new ProcessStartInfo("explorer.exe", _state) { UseShellExecute = true }); }));
         More("退出工具", () => Done(() => { _exit = true; Close(); }));
         var more = new UiButton { Text = "更多操作", AutoSize = true, MinimumSize = new Size(0, 34), Padding = new Padding(10, 4, 10, 4), Margin = new Padding(0, 0, 8, 0) };
-        UiTheme.StyleButton(more); _actions.Add(more); more.Click += (_, _) => moreMenu.Show(more, new Point(0, more.Height));
+        UiTheme.StyleButton(more); more.ContextMenuStrip = moreMenu; _actions.Add(more); more.Click += (_, _) => moreMenu.Show(more, new Point(0, more.Height));
         operations.Controls.AddRange([_apply, _launch, _repair, _restore, more]); footer.Controls.Add(operations, 0, 0); footer.Controls.Add(_feedback, 0, 1); right.Controls.Add(footer, 0, 4);
         detail.Controls.Add(right); split.Panel2.Controls.Add(detail); root.Controls.Add(split, 0, 1);
-        _status.ForeColor = UiTheme.Muted; _status.TextAlign = ContentAlignment.MiddleLeft; _status.Margin = new Padding(3, 4, 0, 0); root.Controls.Add(_status, 0, 2); Controls.Add(root);
+        _status.ForeColor = UiTheme.Muted; _status.Tag = ThemeTone.Muted; _status.TextAlign = ContentAlignment.MiddleLeft; _status.Margin = new Padding(3, 4, 0, 0); root.Controls.Add(_status, 0, 2); Controls.Add(root);
         ShowPage("GameSettings");
         _preset.Items.AddRange(GamePreset.All.Cast<object>().ToArray()); _mode.Items.AddRange(["直接启动游戏", "官方启动器", "已有第三方包装器"]);
         _profiles.SelectedIndexChanged += (_, _) => { if (!_loading && !_working && _profiles.SelectedItem is GameProfile p) LoadProfile(p); };
@@ -221,8 +223,9 @@ internal sealed class MainForm : Form
         foreach (var item in _navigation)
         {
             bool selected = item.Key == key;
-            item.Value.BackColor = selected ? UiTheme.Selection : Color.White;
-            item.Value.ForeColor = selected ? UiTheme.Accent : UiTheme.Muted;
+            ((UiButton)item.Value).Selected = selected;
+            item.Value.BackColor = selected ? UiTheme.Selection : UiTheme.Surface;
+            item.Value.ForeColor = selected ? UiTheme.SelectionInk : UiTheme.Muted;
         }
     }
     private void UpdateSections()
@@ -232,7 +235,7 @@ internal sealed class MainForm : Form
     }
     private void PresentError(string message)
     {
-        _feedback.ForeColor = Color.FromArgb(181, 52, 64); _feedback.Text = message; Log(message);
+        _feedback.Tag = ThemeTone.Error; _feedback.ForeColor = UiTheme.Error; _feedback.Text = message; Log(message);
     }
     private GamePreset SelectedPreset => _preset.SelectedItem as GamePreset ?? GamePreset.Find("custom");
     private Task InitializeAsync()
@@ -350,7 +353,7 @@ internal sealed class MainForm : Form
         RequireLive(); var p = CaptureProfile(); var m = _metadata ?? throw new BridgeException("请获取元数据并选择启动入口。"); var service = Service(p);
         var original = ValveKeyValues.ReadLaunchOptions(File.ReadAllText(p.Request.AccountConfigPath), p.AppId);
         var preview = service.Preview(p.Request, m);
-        using var dialog = new LaunchOptionsDialog(original.Value, p.Request.GameArguments, preview.LaunchOptions);
+        using var dialog = new LaunchOptionsDialog(original.Value, p.Request.GameArguments, preview.LaunchOptions, _themeBinding.ReadPreference);
         if (dialog.ShowDialog(this) != DialogResult.OK) return Task.CompletedTask;
         if (dialog.SelectedAction == ExistingLaunchOptionsAction.Keep) { Log("已保留原设置，本次未接入。"); return Task.CompletedTask; }
         p.Request = p.Request with { GameArguments = dialog.GameArguments, ExistingOptionsAction = dialog.SelectedAction, OriginalOptionsReviewed = true, ExpectedOriginalLaunchOptions = original.Value };
