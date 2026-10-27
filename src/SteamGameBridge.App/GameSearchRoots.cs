@@ -22,7 +22,7 @@ internal static class GameSearchRoots
         {
             try
             {
-                if (!drive.IsReady || drive.DriveType is not (DriveType.Fixed or DriveType.Removable)) continue;
+                if (drive.DriveType is not (DriveType.Fixed or DriveType.Removable) || !drive.IsReady) continue;
                 foreach (string name in CommonFolders) roots.Add(Path.Combine(drive.RootDirectory.FullName, name));
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
