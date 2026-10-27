@@ -197,6 +197,7 @@ internal sealed class MainForm : Form
         var moreMenu = new ContextMenuStrip();
         void More(string title, Func<Task> work) => moreMenu.Items.Add(title).Click += async (_, _) => await RunAsync(work);
         More("管理员打开 Steam", ElevateSteamAsync); More("刷新预览", () => Done(UpdatePreview));
+        More("数据目录", ChangeDataDirectoryAsync);
         More("打开备份目录", () => Done(() => { if (Directory.Exists(_state)) Process.Start(new ProcessStartInfo("explorer.exe", _state) { UseShellExecute = true }); }));
         More("退出工具", () => Done(() => { _exit = true; Close(); }));
         var more = new UiButton { Text = "更多操作", AutoSize = true, MinimumSize = new Size(0, 34), Padding = new Padding(10, 4, 10, 4), Margin = new Padding(0, 0, 8, 0) };
@@ -348,19 +349,19 @@ internal sealed class MainForm : Form
         catch (Exception ex) { Log(ex.Message); }
         finally { _loading = false; UpdateStarwardState(); UpdatePreview(); RefreshLocks(); }
     }
-    private SteamBridgeService Service(GameProfile p) => new(new() { StateDirectory = _state, SteamRoot = p.Request.SteamRoot, AppId = p.AppId, RegisteredLibraries = SteamDiscovery.ReadLibraries(p.Request.SteamRoot), IsBusy = () => LocalEnvironment.Busy(p) });
+    private SteamBridgeService Service(GameProfile p) => new(new() { StateDirectory = _state, SteamRoot = p.Request.SteamRoot, AppId = p.AppId, RegisteredLibraries = SteamDiscovery.ReadLibraries(p.Request.SteamRoot), RecognizedStateDirectories = LocalEnvironment.RecognizedStateDirectories, IsBusy = () => LocalEnvironment.Busy(p) });
     private GameProfile CaptureProfile()
     {
         SteamAppMetadata.ValidateAppId(_appId.Text.Trim());
         if (_libraries.SelectedItem is not string library || _accounts.SelectedItem is not AccountRow account) throw new BridgeException("请明确选择 Steam 游戏库及目标账号。");
-        _tools ??= LocalEnvironment.StageTools(_state);
+        _tools ??= LocalEnvironment.PlanTools(_state);
         var request = new SetupRequest(_steam.Text.Trim(), library, account.Value.LocalConfigPath, _game.Text.Trim(), _tools.Value.Helper, _tools.Value.Placeholder, (LaunchMode)_mode.SelectedIndex == LaunchMode.Starward ? "" : _gameArgs.Text)
-        { PresetId = SelectedPreset.Id, LaunchMode = (LaunchMode)_mode.SelectedIndex, LauncherExe = _launcher.Text.Trim(), LauncherArguments = _template.Text, WaitSeconds = (int)_wait.Value,
+        { SourceHelperExe = Environment.ProcessPath, PresetId = SelectedPreset.Id, LaunchMode = (LaunchMode)_mode.SelectedIndex, LauncherExe = _launcher.Text.Trim(), LauncherArguments = _template.Text, WaitSeconds = (int)_wait.Value,
             Starward = SelectedPreset.StarwardBiz is null ? null : new(_starward.Checked, string.IsNullOrWhiteSpace(_starwardExe.Text) ? null : _starwardExe.Text.Trim()) };
         LaunchConfiguration.Validate(request);
         return new() { Id = _profileId, Name = string.IsNullOrWhiteSpace(_name.Text) ? SelectedPreset.Name : _name.Text.Trim(), AppId = _appId.Text.Trim(), LaunchId = _metadata?.LaunchId ?? "", Request = request, Maintain = _maintenance.Checked };
     }
-    private GameProfile Current() => _store.Load().SingleOrDefault(p => p.Id == _profileId) is { } saved && Service(saved).ReadReceipt() is not null ? saved : CaptureProfile();
+    private GameProfile Current() => _store.Load().SingleOrDefault(p => p.Id == _profileId) is { } saved && (Service(saved).ReadReceipt() is not null || Service(saved).HasPendingExistingResolution) ? saved : CaptureProfile();
     private void RequireLive() { if (_demo) throw new BridgeException("只读演示模式不会执行此操作。"); }
     private Task SaveAsync()
     {
@@ -408,18 +409,26 @@ internal sealed class MainForm : Form
         _metadata = SteamAppMetadata.ParseApiSteamCmdJson(_json, _appId.Text.Trim(), entry.Id);
         _mapping.Text = $"Steam：{_metadata.Name} ({_metadata.AppId}) → {SelectedPreset.Name}";
     }
-    private Task ApplyAsync()
+    private async Task ApplyAsync()
     {
         RequireLive(); var p = CaptureProfile(); var m = _metadata ?? throw new BridgeException("请获取元数据并选择启动入口。"); var service = Service(p);
+        var existing = await Task.Run(() => service.InspectExisting(p.Request, m));
+        if (existing.Exists)
+        {
+            using var install = new ExistingInstallDialog(existing, _themeBinding.ReadPreference);
+            if (install.ShowDialog(this) != DialogResult.OK) return;
+            p.Request = p.Request with { ExistingInstallationAction = install.SelectedAction, ExistingInstallationSnapshot = existing.Snapshot };
+        }
         var original = ValveKeyValues.ReadLaunchOptions(File.ReadAllText(p.Request.AccountConfigPath), p.AppId);
         var preview = service.Preview(p.Request, m);
         using var dialog = new LaunchOptionsDialog(original.Value, p.Request.GameArguments, preview.LaunchOptions, _themeBinding.ReadPreference, p.Request.LaunchMode != LaunchMode.Starward);
-        if (dialog.ShowDialog(this) != DialogResult.OK) return Task.CompletedTask;
-        if (dialog.SelectedAction == ExistingLaunchOptionsAction.Keep) { Log("已保留原设置，本次未接入。"); return Task.CompletedTask; }
+        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+        if (dialog.SelectedAction == ExistingLaunchOptionsAction.Keep) { Log("已保留原设置，本次未接入。"); return; }
         p.Request = p.Request with { GameArguments = dialog.GameArguments, ExistingOptionsAction = dialog.SelectedAction, OriginalOptionsReviewed = true, ExpectedOriginalLaunchOptions = original.Value };
         LaunchConfiguration.Validate(p.Request);
         _store.Save(p); ReloadProfiles(p.Id);
-        var result = service.Apply(p.Request, m); Log(result.Message); LoadProfile(p); _nextRepair[p.Id] = DateTimeOffset.MaxValue; return Task.CompletedTask;
+        LocalEnvironment.StageTools(_state);
+        var result = await Task.Run(() => service.Apply(p.Request, m)); Log(result.Message); LoadProfile(p); _nextRepair[p.Id] = DateTimeOffset.MaxValue; return;
     }
     private async Task RepairAsync()
     {
@@ -428,7 +437,12 @@ internal sealed class MainForm : Form
         var metadata = SteamAppMetadata.ParseApiSteamCmdJson(json, p.AppId, receipt.Metadata.LaunchId);
         var result = Service(p).Repair(metadata); _metadata = metadata; Log(result.Message); _nextRepair[p.Id] = DateTimeOffset.MaxValue;
     }
-    private Task RestoreAsync() { RequireLive(); var p = Current(); Log(Service(p).Restore().Message); return Task.CompletedTask; }
+    private async Task RestoreAsync()
+    {
+        RequireLive(); var p = Current(); var service = Service(p);
+        if (service.HasPendingExistingResolution) { await Task.Run(service.RecoverExistingResolution); Log("安装恢复处理已完成。"); }
+        else Log((await Task.Run(() => service.Restore())).Message);
+    }
     private Task LaunchAsync()
     {
         RequireLive(); var p = Current(); var s = Service(p); var inspection = s.Inspect();
@@ -444,6 +458,17 @@ internal sealed class MainForm : Form
     {
         RequireLive(); if (LocalEnvironment.SteamRunning()) throw new BridgeException("请先从 Steam 菜单完全退出。工具不会强制结束进程。");
         Process.Start(new ProcessStartInfo(Path.Combine(_steam.Text.Trim(), "steam.exe")) { UseShellExecute = true, Verb = "runas" })?.Dispose(); return Task.CompletedTask;
+    }
+    private async Task ChangeDataDirectoryAsync()
+    {
+        RequireLive();
+        string[] steamRoots = string.IsNullOrWhiteSpace(_steam.Text) ? [] : [_steam.Text.Trim()];
+        using var dialog = new DataLocationDialog(Path.GetDirectoryName(_state)!, async path =>
+        {
+            await Task.Run(() => DataLocationSettings.Move(LocalEnvironment.ExecutableDirectory, _state, path, steamRoots));
+        }, _themeBinding.ReadPreference, "当前数据目录：" + _state);
+        if (dialog.ShowDialog(this) == DialogResult.OK) { _exit = true; Application.Restart(); Close(); }
+        await Task.CompletedTask;
     }
     private async Task MaintainAsync()
     {
@@ -532,7 +557,7 @@ internal sealed class MainForm : Form
     private void RefreshLocks()
     {
         bool active = false;
-        try { var saved = _store.Load().SingleOrDefault(x => x.Id == _profileId); active = saved is not null && Service(saved).ReadReceipt() is not null; } catch (Exception ex) { _status.Text = ex.Message; }
+        try { var saved = _store.Load().SingleOrDefault(x => x.Id == _profileId); active = saved is not null && (Service(saved).ReadReceipt() is not null || Service(saved).HasPendingExistingResolution); } catch (Exception ex) { _status.Text = ex.Message; }
         UpdateStarwardState(); UpdateSections();
         _profileTitle.Text = string.IsNullOrWhiteSpace(_name.Text) ? "新游戏配置" : _name.Text;
         _emptyProfiles.Visible = _profiles.Items.Count == 0;

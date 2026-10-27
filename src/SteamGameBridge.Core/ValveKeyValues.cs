@@ -96,6 +96,25 @@ public static class ValveKeyValues
         if (value?.Children is not null) throw new BridgeException("LaunchOptions 不是字符串。");
         return (value is not null, value?.Value);
     }
+    public static IReadOnlyDictionary<string, string> ReadAllLaunchOptions(string text)
+    {
+        var nodes = Parse(text);
+        foreach (string key in new[] { "UserLocalConfigStore", "Software", "Valve", "Steam", "apps" })
+        {
+            var node = Unique(nodes, key); if (node is null) return new Dictionary<string, string>();
+            nodes = node.Children ?? throw new BridgeException("Steam 启动项路径不是对象。");
+        }
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var app in nodes)
+        {
+            if (!uint.TryParse(app.Key, out uint id) || id == 0) continue;
+            var value = Unique(app.Children ?? throw new BridgeException("游戏配置不是对象。"), "LaunchOptions");
+            if (value?.Children is not null) throw new BridgeException("启动项不是字符串。");
+            if (value?.Value is { } command && !result.TryAdd(app.Key, command)) throw new BridgeException("AppID 配置重复。");
+        }
+        return result;
+    }
+
     public static string SetLaunchOptions(string text, string appId, string? value, bool exists = true)
         => SetValue(text, LaunchPath(appId), "LaunchOptions", value, exists);
 
