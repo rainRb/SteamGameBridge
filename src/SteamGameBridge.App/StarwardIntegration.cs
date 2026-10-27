@@ -35,6 +35,17 @@ internal sealed class StarwardNotifier(IStarwardTransport transport)
         catch (Exception ex) { return new("unavailable", "Starward 通知失败，计时未确认；游戏继续运行。" + ex.Message); }
     }
 }
+internal static class StarwardLauncher
+{
+    internal static void Start(SetupRequest request, IStarwardTransport transport)
+    {
+        string uri = LaunchConfiguration.BuildStarwardStartUri(request);
+        if (transport.ProtocolAvailable) transport.SendUri(uri);
+        else if (!string.IsNullOrWhiteSpace(request.Starward?.Executable)) transport.SendExecutable(request.Starward.Executable, uri);
+        else throw new IOException("未找到 Starward，请选择程序路径。");
+    }
+}
+
 internal sealed class WindowsStarwardTransport : IStarwardTransport
 {
     public bool ProtocolAvailable

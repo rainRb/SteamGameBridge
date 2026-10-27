@@ -18,7 +18,7 @@ internal static class Program
             typeof(MainForm).GetMethod("NewProfile", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(form, null);
             Field<ComboBox>(form, "_preset").SelectedItem = GamePreset.Find("zzz");
             Field<TextBox>(form, "_game").Text = @"D:\Games\ZenlessZoneZero\ZenlessZoneZero.exe";
-            ShowPage(form, "Integrations"); Layout(form);
+            ShowPage(form, "GameSettings"); Layout(form);
             var caption = Descendants(form).OfType<Label>().Single(x => x.Text == "Starward EXE（可选）");
             Assert(caption.Width >= caption.GetPreferredSize(Size.Empty).Width, "full Starward caption at " + size);
             var fields = (TableLayoutPanel)caption.Parent!;
@@ -76,11 +76,48 @@ internal static class Program
             Assert(!Directory.EnumerateFileSystemEntries(Fixture).Any(p => p.EndsWith("profiles.json") || p.EndsWith("integrations")), "layout polling writes no Steam or profile configuration");
         }
 
+        StarwardHomeChecks();
         ThemeChecks();
         Assert(!UserGuide.Text.Contains("不代表") && !UserGuide.Text.Contains("自行验收") && !UserGuide.Text.Contains("不会终止"), "guide omits removed explanatory boilerplate");
         Console.WriteLine($"RESULT {passed} UI checks passed. Layout rendering stayed offscreen; no desktop windows were opened.");
         Console.WriteLine("Offscreen renders: " + Fixture);
         return 0;
+    }
+
+    private static void StarwardHomeChecks()
+    {
+        using var form = new MainForm(true, Path.Combine(Fixture, "starward-home"), () => true, () => false);
+        typeof(MainForm).GetMethod("NewProfile", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(form, null);
+        var root = form.Controls[0]; form.Controls.Remove(root);
+        using var surface = new Panel { Size = new Size(1140, 850), Font = form.Font, BackColor = UiTheme.Canvas };
+        surface.Controls.Add(root); ShowPage(form, "GameSettings"); Layout(surface);
+        var preset = Field<ComboBox>(form, "_preset"); var mode = Field<ComboBox>(form, "_mode");
+        foreach (string id in new[] { "zzz", "hi3", "endfield", "wuthering", "custom" })
+        {
+            preset.SelectedItem = GamePreset.Find(id); Layout(surface);
+            bool supported = id is "zzz" or "hi3";
+            Assert(mode.Items.Contains("使用 Starward 启动") == supported, "Starward launch option follows preset: " + id);
+            Assert(Field<Control>(form, "_starwardSection").Visible == supported, "Starward section follows preset: " + id);
+        }
+        preset.SelectedItem = GamePreset.Find("zzz"); mode.SelectedIndex = (int)LaunchMode.Starward; Layout(surface);
+        var section = Field<Control>(form, "_starwardSection");
+        Assert(Ancestor(section, "GameSettings") is not null && Ancestor(section, "Integrations") is null, "Starward controls live on the main settings page");
+        Assert(!Field<Control>(form, "_launcherSection").Visible, "Starward launch does not require generic wrapper settings");
+        Assert(!Field<TextBox>(form, "_gameArgs").Visible, "Starward game arguments stay with Starward");
+        var autoSearch = Descendants(surface).OfType<Button>().Single(b => b.Text == "自动检索");
+        Assert(Ancestor(autoSearch, "GameSettings") is not null, "automatic search is available on the main settings page");
+        string selected = Path.Combine(Fixture, "games", "ZenlessZoneZero.exe");
+        typeof(MainForm).GetMethod("ApplySearchResult", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(form, [new GameSearchResult([selected], [], false)]);
+        Assert(Field<TextBox>(form, "_game").Text == selected, "one search result fills the actual game path");
+        using var dialog = new LaunchOptionsDialog("--dx11", "", "fixture", () => false, supportsArguments: false);
+        Assert(dialog.GameArguments == "" && !Descendants(dialog).OfType<RadioButton>().Single(r => r.Text == "保留游戏参数并接入").Enabled, "Starward launch cannot silently preserve unsupported arguments");
+        using var selection = new GameSelectionDialog([selected, Path.Combine(Fixture, "other", "ZenlessZoneZero.exe")], () => false);
+        Assert(selection.SelectedPath == selected, "multiple results can be selected in a dedicated dialog");
+    }
+    private static Control? Ancestor(Control control, string name)
+    {
+        for (Control? parent = control; parent is not null; parent = parent.Parent) if (parent.Name == name) return parent;
+        return null;
     }
 
     private static void ThemeChecks()

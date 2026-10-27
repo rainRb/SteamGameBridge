@@ -6,7 +6,7 @@ namespace SteamGameBridge.Core;
 
 public sealed record LaunchSpec(string AppId, SetupRequest Request);
 
-public enum LaunchMode { Direct, OfficialLauncher, ExistingWrapper }
+public enum LaunchMode { Direct, OfficialLauncher, ExistingWrapper, Starward }
 public enum ExistingLaunchOptionsAction { Keep, PreserveArguments, Replace }
 public sealed record SteamLaunchEntry(string Id, string Description, string Executable)
 {
@@ -98,19 +98,31 @@ public static class LaunchConfiguration
         if (!Enum.IsDefined(request.LaunchMode) || !Enum.IsDefined(request.ExistingOptionsAction) || request.WaitSeconds is < 1 or > 1800) throw new BridgeException("启动方式或等待时间无效（1–1800 秒）。");
         PathSafety.RequireExe(request.NativeExe);
         ValidateArguments(request.GameArguments);
-        if (request.LaunchMode != LaunchMode.Direct)
+        if (request.LaunchMode == LaunchMode.Starward)
+        {
+            _ = BuildStarwardStartUri(request);
+            if (!string.IsNullOrWhiteSpace(request.GameArguments)) throw new BridgeException("使用 Starward 启动时，请在 Starward 中设置游戏参数。");
+        }
+        if (request.LaunchMode is LaunchMode.OfficialLauncher or LaunchMode.ExistingWrapper)
         {
             PathSafety.RequireExe(request.LauncherExe);
             if (PathSafety.Same(request.NativeExe, request.LauncherExe)) throw new BridgeException("启动器与实际游戏 EXE 必须分别配置。");
             if (request.LauncherArguments.Contains("login_auth_ticket", StringComparison.OrdinalIgnoreCase)) throw new BridgeException("请勿保存登录票据。");
             _ = ExpandLauncherArguments(request, []);
         }
-        if (request.Starward?.Enabled == true)
+        if (request.Starward?.Enabled == true || request.LaunchMode == LaunchMode.Starward)
         {
             if (GamePreset.Find(request.PresetId).StarwardBiz is null) throw new BridgeException("此本地预设不支持 Starward 计时。");
-            if (!string.IsNullOrWhiteSpace(request.Starward.Executable)) PathSafety.Full(request.Starward.Executable);
+            if (request.Starward?.Executable is { Length: > 0 } executable) PathSafety.Full(executable);
         }
     }
+    public static string BuildStarwardStartUri(SetupRequest request)
+    {
+        string biz = GamePreset.Find(request.PresetId).StarwardBiz ?? throw new BridgeException("此游戏不支持 Starward 启动。");
+        string directory = Path.GetDirectoryName(PathSafety.Full(request.NativeExe))!;
+        return $"starward://startgame/{biz}?install_path={Uri.EscapeDataString(directory)}";
+    }
+
     public static void ValidateArguments(string text)
     {
         if (text.Any(c => c is '\0' or '\r' or '\n') || text.Contains("%command%", StringComparison.OrdinalIgnoreCase) || text.Contains("--steam-command", StringComparison.OrdinalIgnoreCase) || text.Contains("login_auth_ticket", StringComparison.OrdinalIgnoreCase)) throw new BridgeException("游戏参数包含无效或保留的桥接/Steam 登录参数；请勿保存票据。");

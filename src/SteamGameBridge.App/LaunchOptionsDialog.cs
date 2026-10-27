@@ -10,13 +10,15 @@ internal sealed class LaunchOptionsDialog : Form
     private readonly TextBox arguments = new() { Dock = DockStyle.Fill };
     private readonly Label note = new() { AutoSize = true, Dock = DockStyle.Fill };
     private readonly WindowsThemeBinding themeBinding;
+    private readonly bool supportsArguments;
     private readonly string configured;
     private readonly string? original;
     public ExistingLaunchOptionsAction SelectedAction => keep.Checked ? ExistingLaunchOptionsAction.Keep : preserve.Checked ? ExistingLaunchOptionsAction.PreserveArguments : ExistingLaunchOptionsAction.Replace;
-    public string GameArguments => arguments.Text;
+    public string GameArguments => supportsArguments ? arguments.Text : "";
 
-    public LaunchOptionsDialog(string? original, string configuredArguments, string command, Func<bool>? darkMode = null)
+    public LaunchOptionsDialog(string? original, string configuredArguments, string command, Func<bool>? darkMode = null, bool supportsArguments = true)
     {
+        this.supportsArguments = supportsArguments; preserve.Enabled = supportsArguments;
         this.original = original; configured = configuredArguments;
         ShowIcon = false;
         Text = "检查原启动项与最终参数"; Font = new Font("Microsoft YaHei UI", 9.5f);
@@ -51,7 +53,8 @@ internal sealed class LaunchOptionsDialog : Form
     }
     private void UpdateArguments()
     {
-        arguments.Enabled = !keep.Checked;
+        arguments.Enabled = supportsArguments && !keep.Checked;
+        if (!supportsArguments) { arguments.Text = ""; note.Text = "游戏参数在 Starward 中设置。"; return; }
         if (keep.Checked) { note.Text = "保留当前 Steam 配置，本次不接入。"; arguments.Text = configured; return; }
         if (replace.Checked) { note.Text = "使用本次配置的游戏参数，不沿用原 Steam 参数；原值仍有备份。"; arguments.Text = configured; return; }
         bool complex;

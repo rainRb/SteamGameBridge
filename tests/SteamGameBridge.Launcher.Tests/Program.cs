@@ -111,6 +111,31 @@ try
     File.WriteAllText(otherSpec, JsonSerializer.Serialize(new LaunchSpec("1234567", request)));
     Steam("1234567"); Refuses(() => NativeLauncher.Run(["--profile", otherSpec, "--steam-command", "unused.exe"]), "本地游戏", "same local EXE protected across AppIDs");
     Assert(waiting.GetAwaiter().GetResult() == -1, "waiting launcher times out normally"); Steam("4162040");
+    foreach (bool registered in new[] { true, false })
+    {
+        ClearOutput(); Process? starwardGame = null;
+        var mock = new MockTransport { ProtocolAvailable = registered, OnUri = uri =>
+        {
+            if (new Uri(uri).Host != "startgame") return;
+            var gameStart = new ProcessStartInfo(fake) { UseShellExecute = false, WorkingDirectory = fixture };
+            foreach (string argument in native) gameStart.ArgumentList.Add(argument);
+            starwardGame = Process.Start(gameStart)!;
+        } };
+        Spec(request with { PresetId = "zzz", LaunchMode = LaunchMode.Starward, GameArguments = "", Starward = new(true, registered ? null : wrapper), WaitSeconds = 5 });
+        Assert(NativeLauncher.Run(command, mock) == 7, "Starward launch waits real game: " + registered);
+        using (starwardGame)
+        using (var doc = JsonDocument.Parse(File.ReadAllText(output)))
+        {
+            int pid = doc.RootElement.GetProperty("ProcessId").GetInt32();
+            Assert(mock.Uris.Count(u => new Uri(u).Host == "startgame") == 1, "Starward starts game once");
+            Assert(mock.Uris.Contains(StarwardNotifier.BuildUri("zzz", pid)), "Starward launch hands off actual game PID");
+            Assert(mock.Executables.Count == (registered ? 0 : 2), "Starward protocol and EXE fallback");
+        }
+    }
+    ClearOutput(); Spec(request with { PresetId = "zzz", LaunchMode = LaunchMode.Starward, GameArguments = "", Starward = new(false), WaitSeconds = 1 });
+    Refuses(() => NativeLauncher.Run(command, new MockTransport()), "Starward", "missing Starward refuses launch");
+    Assert(!File.Exists(output) && !NativeLauncher.BridgeRunning("4162040"), "missing Starward starts no game and releases lock");
+    Spec(request);
     if (args.Length == 3)
     {
         string published = Path.GetFullPath(args[2]);
@@ -134,7 +159,8 @@ sealed class MockTransport : IStarwardTransport
 {
     public bool ProtocolAvailable { get; init; }
     public bool Fail { get; init; }
+    public Action<string>? OnUri { get; init; }
     public List<string> Uris { get; } = []; public List<string> Executables { get; } = [];
-    public void SendUri(string uri) { if (Fail) throw new IOException("fixture failure"); Uris.Add(uri); }
-    public void SendExecutable(string exe, string uri) { if (Fail) throw new IOException("fixture failure"); Executables.Add(exe); Uris.Add(uri); }
+    public void SendUri(string uri) { if (Fail) throw new IOException("fixture failure"); Uris.Add(uri); OnUri?.Invoke(uri); }
+    public void SendExecutable(string exe, string uri) { if (Fail) throw new IOException("fixture failure"); Executables.Add(exe); Uris.Add(uri); OnUri?.Invoke(uri); }
 }
