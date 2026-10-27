@@ -66,6 +66,7 @@ public sealed class ProfileStore(string stateRoot)
     }
     public void Save(GameProfile profile)
     {
+        using var dataLock = DataLocationSettings.AcquireLock(stateRoot);
         PathSafety.NoReparse(FilePath); Directory.CreateDirectory(PathSafety.Full(stateRoot));
         PathSafety.NoReparse(Path.Combine(stateRoot, ".profiles.lock"));
         using var fileLock = new FileStream(Path.Combine(stateRoot, ".profiles.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
@@ -77,6 +78,7 @@ public sealed class ProfileStore(string stateRoot)
     }
     public void Delete(string id)
     {
+        using var dataLock = DataLocationSettings.AcquireLock(stateRoot);
         PathSafety.NoReparse(FilePath); Directory.CreateDirectory(PathSafety.Full(stateRoot));
         PathSafety.NoReparse(Path.Combine(stateRoot, ".profiles.lock"));
         using var fileLock = new FileStream(Path.Combine(stateRoot, ".profiles.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);

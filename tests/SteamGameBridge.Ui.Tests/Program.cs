@@ -76,12 +76,49 @@ internal static class Program
             Assert(!Directory.EnumerateFileSystemEntries(Fixture).Any(p => p.EndsWith("profiles.json") || p.EndsWith("integrations")), "layout polling writes no Steam or profile configuration");
         }
 
+        StorageAndInstallChecks();
         StarwardHomeChecks();
         ThemeChecks();
         Assert(!UserGuide.Text.Contains("不代表") && !UserGuide.Text.Contains("自行验收") && !UserGuide.Text.Contains("不会终止"), "guide omits removed explanatory boilerplate");
         Console.WriteLine($"RESULT {passed} UI checks passed. Layout rendering stayed offscreen; no desktop windows were opened.");
         Console.WriteLine("Offscreen renders: " + Fixture);
         return 0;
+    }
+
+    private static void StorageAndInstallChecks()
+    {
+        string parent = Path.Combine(Fixture, "location-choice"); int confirmed = 0;
+        using (var chooser = new DataLocationDialog(parent, _ => { confirmed++; return Task.CompletedTask; }, () => false))
+        {
+            Assert(chooser.DataDirectory == Path.Combine(parent, DataLocationSettings.FolderName), "storage chooser previews an independent folder beside the exe");
+            chooser.DialogResult = DialogResult.Cancel;
+            Assert(confirmed == 0 && !Directory.Exists(parent), "cancelling storage selection writes nothing");
+        }
+        var inspection = new ExistingInstallInspection(ExistingInstallKind.ManagedPlaceholder, @"C:\FixtureSteam\steamapps\appmanifest_4162040.acf", @"C:\FixtureSteam\steamapps\common\FixtureGame", 4235, 2, "snapshot", []);
+        using (var dialog = new ExistingInstallDialog(inspection, () => true))
+        {
+            var buttons = Descendants(dialog).OfType<Button>().ToArray();
+            Assert(buttons.Single(b => b.Text == "重新接入").Enabled, "verified placeholder offers reconnect");
+            var delete = buttons.Single(b => b.Text == "删除现有安装并接入"); Assert(!delete.Enabled, "deletion starts unconfirmed");
+            Descendants(dialog).OfType<CheckBox>().Single().Checked = true; Assert(delete.Enabled, "deletion requires the explicit checkbox");
+        }
+        using (var dialog = new ExistingInstallDialog(inspection with { BlockReasons = ["目录被共用"] }, () => false))
+            Assert(!Descendants(dialog).OfType<CheckBox>().Single().Enabled && !Descendants(dialog).OfType<Button>().Single(b => b.Text == "重新接入").Enabled, "unsafe install disables destructive actions");
+        string data = Path.Combine(Fixture, "preview-data"), native = Path.Combine(Fixture, "preview-native", "ZenlessZoneZero.exe");
+        Directory.CreateDirectory(Path.GetDirectoryName(native)!); File.WriteAllBytes(native, [(byte)'M', (byte)'Z', 0, 0]);
+        using var form = new MainForm(false, data, () => false, () => false);
+        typeof(MainForm).GetField("_loading", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(form, true);
+        Field<ComboBox>(form, "_preset").SelectedItem = GamePreset.Find("zzz"); Field<TextBox>(form, "_appId").Text = "4162040";
+        Field<TextBox>(form, "_steam").Text = Path.Combine(Fixture, "preview-steam"); Field<TextBox>(form, "_game").Text = native;
+        var libraries = Field<ComboBox>(form, "_libraries"); libraries.Items.Add(Path.Combine(Fixture, "preview-library")); libraries.SelectedIndex = 0;
+        var accounts = Field<ComboBox>(form, "_accounts"); var rowType = typeof(MainForm).GetNestedType("AccountRow", BindingFlags.NonPublic)!;
+        accounts.Items.Add(Activator.CreateInstance(rowType, new SteamAccount("12345", "fixture", Path.Combine(Fixture, "preview-steam", "userdata", "12345", "config", "localconfig.vdf"), true))!); accounts.SelectedIndex = 0;
+        var tools = (Path.Combine(data, "bin", "planned", "SteamGameBridge.exe"), Path.Combine(data, "bin", "planned", "SteamPlaceholder.exe"));
+        typeof(MainForm).GetField("_tools", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(form, tools);
+        var profile = (GameProfile)typeof(MainForm).GetMethod("CaptureProfile", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(form, null)!;
+        Assert(!Directory.Exists(data), "capturing a preview does not create a data directory");
+        new ProfileStore(data).Save(profile);
+        Assert(File.Exists(Path.Combine(data, "profiles.json")) && !Directory.Exists(Path.Combine(data, "bin")), "saving settings writes no staged executable");
     }
 
     private static void StarwardHomeChecks()

@@ -245,6 +245,149 @@ runner.Test("Search cancellation and custom target names", () =>
     Runner.Throws(() => GameFileSearch.TargetNames("custom"));
 });
 
+runner.Test("Preflight is read-only and recognizes verified managed placeholder", () =>
+{
+    using var f = new Fixture(Metadata(), original); f.Service.Apply(f.Request, f.Metadata);
+    string nextRoot = Path.Combine(f.Root, "NewData");
+    var next = new SteamBridgeService(new() { StateDirectory = nextRoot, SteamRoot = f.Steam, AppId = "4162040", RegisteredLibraries = [f.Library, f.Steam], RecognizedStateDirectories = [f.StateRoot] });
+    var inspection = next.InspectExisting(f.Request, f.Metadata);
+    Runner.Equal(ExistingInstallKind.ManagedPlaceholder, inspection.Kind); Runner.Equal(0, inspection.BlockReasons.Count); Runner.True(!Directory.Exists(nextRoot));
+});
+runner.Test("Managed reconnect preserves first original startup setting", () =>
+{
+    using var f = new Fixture(Metadata(), original); f.Service.Apply(f.Request, f.Metadata);
+    var next = new SteamBridgeService(new() { StateDirectory = Path.Combine(f.Root, "NewData"), SteamRoot = f.Steam, AppId = "4162040", RegisteredLibraries = [f.Library, f.Steam], RecognizedStateDirectories = [f.StateRoot] });
+    var inspection = next.InspectExisting(f.Request, f.Metadata);
+    var result = next.Apply(f.Request with { ExistingInstallationAction = ExistingInstallAction.Reconnect, ExistingInstallationSnapshot = inspection.Snapshot }, f.Metadata);
+    Runner.Equal("-screen-fullscreen 0", next.ReadReceipt()!.OriginalLaunchOptions); Runner.Equal(ExistingInstallAction.Reconnect, next.ReadReceipt()!.ExistingInstallationAction);
+    Runner.Equal(0, next.Inspect().Conflicts.Count); Runner.True(!next.HasPendingExistingResolution);
+    next.Restore(); Runner.Equal(original, File.ReadAllText(f.Config));
+});
+runner.Test("Verified placeholder-only restore removes just the owned install", () =>
+{
+    using var f = new Fixture(Metadata(), original); var preview = f.Service.Apply(f.Request, f.Metadata).Preview!;
+    var next = new SteamBridgeService(new() { StateDirectory = Path.Combine(f.Root, "ResetData"), SteamRoot = f.Steam, AppId = "4162040", RegisteredLibraries = [f.Library, f.Steam], RecognizedStateDirectories = [f.StateRoot] });
+    var inspection = next.InspectExisting(f.Request, f.Metadata); next.RestoreVerifiedExisting(f.Request, f.Metadata, inspection.Snapshot);
+    Runner.True(!File.Exists(preview.ManifestPath) && !Directory.Exists(preview.PlaceholderDirectory)); Runner.Equal(original, File.ReadAllText(f.Config)); Runner.True(File.Exists(f.Native));
+});
+runner.Test("Modified owned payload is not offered as trusted reconnect", () =>
+{
+    using var f = new Fixture(Metadata(), original); var preview = f.Service.Apply(f.Request, f.Metadata).Preview!;
+    File.AppendAllText(Path.Combine(preview.PlaceholderDirectory, f.Metadata.Executable), "changed");
+    var next = new SteamBridgeService(new() { StateDirectory = Path.Combine(f.Root, "Next"), SteamRoot = f.Steam, AppId = "4162040", RegisteredLibraries = [f.Library, f.Steam], RecognizedStateDirectories = [f.StateRoot] });
+    Runner.True(next.InspectExisting(f.Request, f.Metadata).Kind != ExistingInstallKind.ManagedPlaceholder);
+});
+runner.Test("Explicit delete replaces existing payload but normal apply still refuses it", () =>
+{
+    using var f = new Fixture(Metadata(), original); var preview = f.Service.Preview(f.Request, f.Metadata);
+    Directory.CreateDirectory(preview.PlaceholderDirectory); File.WriteAllBytes(Path.Combine(preview.PlaceholderDirectory, "payload.pak"), new byte[1024 * 1024 + 1]);
+    var receipt = new BridgeReceipt { Request = f.Request, Metadata = f.Metadata, Preview = preview }; File.WriteAllText(preview.ManifestPath, SteamBridgeService.RenderManifest(receipt));
+    Runner.Throws(() => f.Service.Apply(f.Request, f.Metadata));
+    var inspection = f.Service.InspectExisting(f.Request, f.Metadata); Runner.Equal(ExistingInstallKind.GameFiles, inspection.Kind);
+    f.Service.Apply(f.Request with { ExistingInstallationAction = ExistingInstallAction.DeleteAndReconnect, ExistingInstallationSnapshot = inspection.Snapshot }, f.Metadata);
+    Runner.True(!File.Exists(Path.Combine(preview.PlaceholderDirectory, "payload.pak"))); Runner.True(File.Exists(f.Native));
+    f.Service.Restore(); Runner.True(!File.Exists(preview.ManifestPath)); Runner.Equal(original, File.ReadAllText(f.Config));
+});
+runner.Test("Shared directory, downloads, and native overlap block deletion", () =>
+{
+    using var f = new Fixture(Metadata(), original); var preview = f.Service.Preview(f.Request, f.Metadata); Directory.CreateDirectory(preview.PlaceholderDirectory);
+    File.WriteAllText(preview.ManifestPath, SteamBridgeService.RenderManifest(new() { Request = f.Request, Metadata = f.Metadata, Preview = preview }));
+    string shared = Path.Combine(f.Library, "steamapps", "appmanifest_123.acf"); File.WriteAllText(shared, "\"AppState\" { \"appid\" \"123\" \"installdir\" " + ValveKeyValues.Quote(f.Metadata.InstallDirectory) + " }");
+    Runner.True(f.Service.InspectExisting(f.Request, f.Metadata).BlockReasons.Any(r => r.Contains("共用"))); File.Delete(shared);
+    Directory.CreateDirectory(Path.Combine(f.Library, "steamapps", "downloading", "4162040")); Runner.Equal(ExistingInstallKind.IncompleteInstall, f.Service.InspectExisting(f.Request, f.Metadata).Kind);
+    Directory.Delete(Path.Combine(f.Library, "steamapps", "downloading", "4162040"));
+    string inside = Path.Combine(preview.PlaceholderDirectory, "native.exe"); File.Copy(f.Native, inside);
+    Runner.True(f.Service.InspectExisting(f.Request with { NativeExe = inside }, f.Metadata).BlockReasons.Count > 0);
+});
+runner.Test("Preflight fingerprint prevents deleting files added after confirmation", () =>
+{
+    using var f = new Fixture(Metadata(), original); var preview = f.Service.Preview(f.Request, f.Metadata); Directory.CreateDirectory(preview.PlaceholderDirectory);
+    var inspection = f.Service.InspectExisting(f.Request, f.Metadata); string keep = Path.Combine(preview.PlaceholderDirectory, "keep.txt"); File.WriteAllText(keep, "keep");
+    Runner.Throws(() => f.Service.Apply(f.Request with { ExistingInstallationAction = ExistingInstallAction.DeleteAndReconnect, ExistingInstallationSnapshot = inspection.Snapshot }, f.Metadata));
+    Runner.Equal("keep", File.ReadAllText(keep));
+});
+runner.Test("Interrupted replacement can roll back from the journal", () =>
+{
+    using var f = new Fixture(Metadata(), original); var preview = f.Service.Preview(f.Request, f.Metadata); Directory.CreateDirectory(preview.PlaceholderDirectory); File.WriteAllText(Path.Combine(preview.PlaceholderDirectory, "keep.bin"), "original data");
+    var inspection = f.Service.InspectExisting(f.Request, f.Metadata); bool fail = true;
+    f.BusyProbe = () => fail && File.Exists(Path.Combine(f.State, "pending-existing.json")) && File.ReadAllText(Path.Combine(f.State, "pending-existing.json")).Contains("detached");
+    Runner.Throws(() => f.Service.Apply(f.Request with { ExistingInstallationAction = ExistingInstallAction.DeleteAndReconnect, ExistingInstallationSnapshot = inspection.Snapshot }, f.Metadata));
+    Runner.True(f.Service.HasPendingExistingResolution); fail = false; f.Service.RecoverExistingResolution();
+    Runner.Equal("original data", File.ReadAllText(Path.Combine(preview.PlaceholderDirectory, "keep.bin"))); Runner.True(!f.Service.HasPendingExistingResolution); Runner.Equal(original, File.ReadAllText(f.Config));
+});
+runner.Test("Recovery rechecks shared installs, downloads and quarantine contents", () =>
+{
+    using var f = new Fixture(Metadata(), original); var preview = f.Service.Preview(f.Request, f.Metadata);
+    Directory.CreateDirectory(preview.PlaceholderDirectory); File.WriteAllText(Path.Combine(preview.PlaceholderDirectory, "keep.bin"), "original data");
+    var inspection = f.Service.InspectExisting(f.Request, f.Metadata); bool fail = true;
+    f.BusyProbe = () => fail && File.Exists(Path.Combine(f.State, "pending-existing.json")) && File.ReadAllText(Path.Combine(f.State, "pending-existing.json")).Contains("detached");
+    Runner.Throws(() => f.Service.Apply(f.Request with { ExistingInstallationAction = ExistingInstallAction.DeleteAndReconnect, ExistingInstallationSnapshot = inspection.Snapshot }, f.Metadata));
+    fail = false; string shared = Path.Combine(f.Library, "steamapps", "appmanifest_123.acf");
+    File.WriteAllText(shared, "\"AppState\" { \"appid\" \"123\" \"installdir\" " + ValveKeyValues.Quote(f.Metadata.InstallDirectory) + " }");
+    Runner.Throws(f.Service.RecoverExistingResolution); Runner.True(f.Service.HasPendingExistingResolution); File.Delete(shared);
+    string downloading = Path.Combine(f.Library, "steamapps", "downloading", "4162040"); Directory.CreateDirectory(downloading);
+    Runner.Throws(f.Service.RecoverExistingResolution); Directory.Delete(downloading);
+    var journal = JsonNode.Parse(File.ReadAllText(Path.Combine(f.State, "pending-existing.json")))!;
+    string quarantine = journal["Quarantine"]!.GetValue<string>(); File.WriteAllText(Path.Combine(quarantine, "new.txt"), "new data");
+    f.Service.RecoverExistingResolution();
+    Runner.Equal("original data", File.ReadAllText(Path.Combine(preview.PlaceholderDirectory, "keep.bin")));
+    Runner.Equal("new data", File.ReadAllText(Path.Combine(preview.PlaceholderDirectory, "new.txt")));
+    Runner.True(!f.Service.HasPendingExistingResolution);
+});
+runner.Test("Planned helper paths preview without creating staged files", () =>
+{
+    using var f = new Fixture(Metadata(), original); string target = Path.Combine(f.StateRoot, "bin", "future", "SteamGameBridge.exe");
+    f.Service.Preview(f.Request with { SourceHelperExe = f.Helper, HelperExe = target, PlaceholderExe = Path.Combine(Path.GetDirectoryName(target)!, "SteamPlaceholder.exe") }, f.Metadata);
+    Runner.True(!Directory.Exists(f.StateRoot));
+});
+runner.Test("Storage suggestion and locator reads do not write", () =>
+{
+    using var f = new Fixture(Metadata(), original); string exe = Path.GetDirectoryName(f.Helper)!;
+    Runner.Equal(Path.Combine(exe, "SteamGameBridge.Data"), DataLocationSettings.SuggestedDirectory(exe)); Runner.True(DataLocationSettings.Read(exe) is null);
+    Runner.True(!File.Exists(Path.Combine(exe, "SteamGameBridge.ini"))); Runner.True(!Directory.Exists(DataLocationSettings.SuggestedDirectory(exe)));
+});
+runner.Test("Confirmed storage saves next to exe and moves inactive data safely", () =>
+{
+    using var f = new Fixture(Metadata(), original); string exe = Path.GetDirectoryName(f.Helper)!;
+    string data = Path.Combine(f.Root, "Data", "SteamGameBridge.Data"), next = Path.Combine(f.Root, "Data2", "SteamGameBridge.Data");
+    DataLocationSettings.Confirm(exe, data); new ProfileStore(data).Save(new() { Name = "test", AppId = "4162040", Request = f.Request });
+    Runner.Equal(data, DataLocationSettings.Read(exe)); DataLocationSettings.Move(exe, data, next, [f.Steam]); Runner.Equal(next, DataLocationSettings.Read(exe));
+    Runner.True(!Directory.Exists(data)); Runner.Equal(1, new ProfileStore(next).Load().Count);
+});
+runner.Test("Storage refuses unknown directories and unavailable locator destinations", () =>
+{
+    using var f = new Fixture(Metadata(), original); string exe = Path.GetDirectoryName(f.Helper)!, data = Path.Combine(f.Root, "Storage"); Directory.CreateDirectory(data); File.WriteAllText(Path.Combine(data, "keep.txt"), "keep");
+    Runner.Throws(() => DataLocationSettings.Confirm(exe, data)); Runner.Equal("keep", File.ReadAllText(Path.Combine(data, "keep.txt")));
+    Directory.CreateDirectory(Path.Combine(exe, "SteamGameBridge.ini")); string fresh = Path.Combine(f.Root, "FreshData");
+    bool rejected = false; try { DataLocationSettings.Confirm(exe, fresh); } catch (IOException) { rejected = true; }
+    Runner.True(rejected && !Directory.Exists(fresh));
+});
+runner.Test("Active integrations and remaining Steam references prevent storage moves", () =>
+{
+    using var f = new Fixture(Metadata(), original); string exe = Path.GetDirectoryName(f.Helper)!, data = Path.Combine(f.Root, "Data"), next = Path.Combine(f.Root, "Next"); DataLocationSettings.Confirm(exe, data);
+    string integration = Path.Combine(data, "integrations", "one"); Directory.CreateDirectory(integration); File.WriteAllText(Path.Combine(integration, "active.json"), "{}");
+    Runner.Throws(() => DataLocationSettings.Move(exe, data, next)); File.Delete(Path.Combine(integration, "active.json"));
+    File.WriteAllText(f.Config, Vdf.SetLaunchOptions(File.ReadAllText(f.Config), WindowsArguments.Quote(Path.Combine(data, "helper.exe"))));
+    Runner.Throws(() => DataLocationSettings.Move(exe, data, next, [f.Steam])); Runner.True(Directory.Exists(data));
+});
+
+runner.Test("Verified legacy placeholder restores the original absent launch option", () =>
+{
+    using var f = new Fixture(Metadata(), Vdf.SetLaunchOptions(original, null, false)); var preview = f.Service.Apply(f.Request, f.Metadata).Preview!;
+    string legacyRoot = Path.Combine(f.Root, "LegacyState"); Directory.CreateDirectory(legacyRoot);
+    var receipt = JsonNode.Parse(File.ReadAllText(Path.Combine(f.State, "active.json")))!.AsObject(); string id = receipt["Id"]!.GetValue<string>();
+    string marker = Path.Combine(preview.PlaceholderDirectory, ".steam-game-bridge-owner.json"), oldMarker = Path.Combine(preview.PlaceholderDirectory, ".zzz-steam-bridge-owner.json");
+    var owner = JsonNode.Parse(File.ReadAllText(marker))!; owner["owner"] = "ZZZSteamBridge"; File.WriteAllText(oldMarker, owner.ToJsonString()); File.Delete(marker);
+    var files = receipt["OwnedFiles"]!.AsObject(); files.Remove(".steam-game-bridge-owner.json"); files[".zzz-steam-bridge-owner.json"] = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(oldMarker)));
+    receipt["Metadata"]!.AsObject().Remove("AppId");
+    string backup = Path.Combine(legacyRoot, "backups", id, "localconfig.vdf.original"); Directory.CreateDirectory(Path.GetDirectoryName(backup)!); File.Copy(receipt["ConfigBackupFile"]!.GetValue<string>(), backup); receipt["ConfigBackupFile"] = backup;
+    string command = WindowsArguments.Quote(f.Helper) + " --game " + WindowsArguments.Quote(f.Native) + " -- --steam-command %command%";
+    receipt["Preview"]!["LaunchOptions"] = command; File.WriteAllText(f.Config, Vdf.SetLaunchOptions(File.ReadAllText(f.Config), command)); File.WriteAllText(Path.Combine(legacyRoot, "active.json"), receipt.ToJsonString());
+    var next = new SteamBridgeService(new() { StateDirectory = Path.Combine(f.Root, "Reset"), SteamRoot = f.Steam, AppId = "4162040", RegisteredLibraries = [f.Library, f.Steam], RecognizedStateDirectories = [legacyRoot] });
+    var inspection = next.InspectExisting(f.Request, f.Metadata); Runner.Equal(ExistingInstallKind.ManagedPlaceholder, inspection.Kind);
+    next.RestoreVerifiedExisting(f.Request, f.Metadata, inspection.Snapshot); Runner.True(!Vdf.ReadLaunchOptions(File.ReadAllText(f.Config)).Exists); Runner.True(!File.Exists(preview.ManifestPath));
+});
+
 runner.Report();
 return runner.Failed == 0 ? 0 : 1;
 

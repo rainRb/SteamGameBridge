@@ -8,7 +8,9 @@ namespace SteamGameBridge.App;
 
 internal static class LocalEnvironment
 {
-    internal static string StateDirectory => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SteamGameBridge");
+    internal static string ExecutableDirectory => Path.GetDirectoryName(Environment.ProcessPath ?? throw new IOException("无法定位当前程序。"))!;
+    internal static string StateDirectory => DataLocationSettings.Read(ExecutableDirectory) ?? throw new IOException("请先选择数据保存位置。");
+    internal static IReadOnlyList<string> RecognizedStateDirectories => new[] { "SteamGameBridge", "ZZZSteamBridge" }.Select(name => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), name)).ToArray();
     internal static string SteamRoot()
     {
         string? path = Registry.GetValue(@"HKEY_CURRENT_USER\Software\Valve\Steam", "SteamPath", null) as string;
@@ -45,29 +47,27 @@ internal static class LocalEnvironment
         }
     }
 
-    internal static (string Helper, string Placeholder) StageTools(string state)
+    internal static (string Helper, string Placeholder) PlanTools(string state)
     {
         string source = Environment.ProcessPath ?? throw new IOException("无法定位当前工具。");
         if (!Path.GetFileName(source).Equals("SteamGameBridge.exe", StringComparison.OrdinalIgnoreCase)) throw new IOException("请直接运行已发布的 SteamGameBridge.exe。");
         string version = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(source)))[..16].ToLowerInvariant();
-        string directory = Path.Combine(state, "bin", version);
-        GuardPath(directory);
-        Directory.CreateDirectory(directory);
-        string helper = Path.Combine(directory, "SteamGameBridge.exe");
-        if (!Path.GetFullPath(source).Equals(helper, StringComparison.OrdinalIgnoreCase))
-        {
-            GuardPath(helper);
-            if (!File.Exists(helper)) File.Copy(source, helper, false);
-            if (!SHA256.HashData(File.ReadAllBytes(source)).SequenceEqual(SHA256.HashData(File.ReadAllBytes(helper))))
-                throw new IOException("稳定目录中的工具校验失败，拒绝覆盖。");
-        }
-        string placeholder = Path.Combine(directory, "SteamPlaceholder.exe");
-        GuardPath(placeholder);
+        string directory = Path.Combine(state, "bin", version); GuardPath(directory);
+        return (Path.Combine(directory, "SteamGameBridge.exe"), Path.Combine(directory, "SteamPlaceholder.exe"));
+    }
+    internal static (string Helper, string Placeholder) StageTools(string state)
+    {
+        using var dataLock = DataLocationSettings.AcquireLock(state);
+        var plan = PlanTools(state); string source = Environment.ProcessPath!;
+        Directory.CreateDirectory(Path.GetDirectoryName(plan.Helper)!);
+        GuardPath(plan.Helper);
+        if (!File.Exists(plan.Helper)) File.Copy(source, plan.Helper, false);
+        if (!SHA256.HashData(File.ReadAllBytes(source)).SequenceEqual(SHA256.HashData(File.ReadAllBytes(plan.Helper)))) throw new IOException("稳定目录中的工具校验失败，拒绝覆盖。");
+        GuardPath(plan.Placeholder);
         using var resource = Assembly.GetExecutingAssembly().GetManifestResourceStream("SteamPlaceholder.exe") ?? throw new IOException("缺少占位程序。");
-        using var content = new MemoryStream(); resource.CopyTo(content);
-        byte[] bytes = content.ToArray();
-        if (!File.Exists(placeholder)) { using var file = new FileStream(placeholder, FileMode.CreateNew); file.Write(bytes); }
-        if (!SHA256.HashData(bytes).SequenceEqual(SHA256.HashData(File.ReadAllBytes(placeholder)))) throw new IOException("占位程序校验失败。");
-        return (helper, placeholder);
+        using var content = new MemoryStream(); resource.CopyTo(content); byte[] bytes = content.ToArray();
+        if (!File.Exists(plan.Placeholder)) { using var file = new FileStream(plan.Placeholder, FileMode.CreateNew); file.Write(bytes); }
+        if (!SHA256.HashData(bytes).SequenceEqual(SHA256.HashData(File.ReadAllBytes(plan.Placeholder)))) throw new IOException("占位程序校验失败。");
+        return plan;
     }
 }

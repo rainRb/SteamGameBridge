@@ -101,6 +101,7 @@ public sealed class BridgeServiceOptions
     public required string StateDirectory { get; init; }
     public required string SteamRoot { get; init; }
     public required string AppId { get; init; }
+    public IReadOnlyList<string> RecognizedStateDirectories { get; init; } = [];
     public Func<bool> IsBusy { get; init; } = () => false;
     public required IReadOnlyList<string> RegisteredLibraries { get; init; }
 }
@@ -108,6 +109,10 @@ public sealed class BridgeServiceOptions
 public sealed record SteamDepot(string DepotId, string ManifestId, string Size);
 public sealed record SetupRequest(string SteamRoot, string LibraryRoot, string AccountConfigPath, string NativeExe, string HelperExe, string? PlaceholderExe = null, string GameArguments = "")
 {
+    public string? SourceHelperExe { get; init; }
+    public ExistingInstallAction ExistingInstallationAction { get; init; }
+    public string? ExistingInstallationSnapshot { get; init; }
+    public string? ResolutionId { get; init; }
     public string PresetId { get; init; } = "custom";
     public LaunchMode LaunchMode { get; init; }
     public string LauncherExe { get; init; } = "";
@@ -141,5 +146,7 @@ public sealed class BridgeReceipt
     public Dictionary<string, string> OwnedFiles { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public Dictionary<string, List<string>> RecoveryFileHashes { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public List<string> RecoveryManifestHashes { get; set; } = [];
+    public string? ResolutionId { get; set; }
+    public ExistingInstallAction ExistingInstallationAction { get; set; }
     public string? LastError { get; set; }
 }
