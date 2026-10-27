@@ -96,11 +96,10 @@ try {
             $stage = Join-Path $artifactRoot "staging\$stageName"
             New-Item -ItemType Directory -Path $stage | Out-Null
             Copy-Item -LiteralPath (Join-Path $artifactRoot "$mode\SteamGameBridge.exe") -Destination $stage
-            foreach ($document in @('README.md', 'LICENSE')) {
+            foreach ($document in @('LICENSE')) {
                 if (-not (Test-Path -LiteralPath $document -PathType Leaf)) { throw "Required package document missing: $document" }
                 Copy-Item -LiteralPath $document -Destination $stage
             }
-            if (Test-Path -LiteralPath 'docs' -PathType Container) { Copy-Item -LiteralPath 'docs' -Destination $stage -Recurse }
             if ($mode -eq 'self-contained') {
                 # Read the actually resolved framework versions/package root,
                 # rather than guessing the SDK's current runtime patch level.
@@ -122,8 +121,6 @@ try {
                     Copy-Item -LiteralPath $noticePath -Destination (Join-Path $thirdParty $notice.Target)
                 }
             }
-            $buildInfo = @("Version: $Version", "Variant: $mode", 'Target: Windows x64', "SDK: $sdkVersion", 'Status: experimental prerelease', 'Actual Steam recognition, playtime, friends status and Overlay remain unverified.', 'The small variant requires .NET 10 Desktop Runtime x64; self-contained includes it.')
-            [IO.File]::WriteAllLines((Join-Path $stage 'BUILDINFO.txt'), $buildInfo, [Text.UTF8Encoding]::new($false))
             $archiveName = "SteamGameBridge-$Version-win-x64-$mode.zip"
             $archive = Join-Path $packageRoot $archiveName
             Compress-Archive -LiteralPath @(Get-ChildItem -LiteralPath $stage -Force | ForEach-Object FullName) -DestinationPath $archive -CompressionLevel Optimal -Force
