@@ -198,6 +198,7 @@ internal sealed class MainForm : Form
         void More(string title, Func<Task> work) => moreMenu.Items.Add(title).Click += async (_, _) => await RunAsync(work);
         More("管理员打开 Steam", ElevateSteamAsync); More("刷新预览", () => Done(UpdatePreview));
         More("数据目录", ChangeDataDirectoryAsync);
+        More("许可证", () => Done(() => { using var dialog = new LicenseDialog(_themeBinding.ReadPreference); dialog.ShowDialog(this); }));
         More("打开备份目录", () => Done(() => { if (Directory.Exists(_state)) Process.Start(new ProcessStartInfo("explorer.exe", _state) { UseShellExecute = true }); }));
         More("退出工具", () => Done(() => { _exit = true; Close(); }));
         var more = new UiButton { Text = "更多操作", AutoSize = true, MinimumSize = new Size(0, 34), Padding = new Padding(10, 4, 10, 4), Margin = new Padding(0, 0, 8, 0) };

@@ -67,6 +67,25 @@ try {
         $publishArgs = @('publish', 'src/SteamGameBridge.App/SteamGameBridge.App.csproj', '-c', 'Release', '-r', 'win-x64', '--self-contained', $selfContainedValue, '-p:PublishSingleFile=true', "-p:Version=$Version", '-p:ContinuousIntegrationBuild=true', '-o', (Join-Path $artifactRoot $mode), '--nologo')
         Invoke-DotNet -Arguments $publishArgs -LogName "publish-$mode.txt"
         if (-not (Test-Path -LiteralPath (Join-Path $artifactRoot "$mode\SteamGameBridge.exe") -PathType Leaf)) { throw "Published executable missing for $mode." }
+        $noticeStart = New-Object System.Diagnostics.ProcessStartInfo
+        $noticeStart.FileName = Join-Path $artifactRoot "$mode\SteamGameBridge.exe"
+        $noticeStart.Arguments = '--licenses'
+        $noticeStart.UseShellExecute = $false; $noticeStart.CreateNoWindow = $true
+        $noticeStart.RedirectStandardOutput = $true; $noticeStart.RedirectStandardError = $true
+        $noticeProcess = [Diagnostics.Process]::Start($noticeStart)
+        try {
+            $noticeOutput = $noticeProcess.StandardOutput.ReadToEndAsync()
+            $noticeError = $noticeProcess.StandardError.ReadToEndAsync()
+            if (-not $noticeProcess.WaitForExit(30000)) { $noticeProcess.Kill(); throw 'License inspection timed out.' }
+            $noticeText = $noticeOutput.GetAwaiter().GetResult()
+            if ($noticeProcess.ExitCode -ne 0 -or -not $noticeText.Contains('MIT License')) { throw 'Embedded project license missing.' }
+            foreach ($name in @('Licenses.NETCore.txt', 'Licenses.NETCore.ThirdParty.txt', 'Licenses.WindowsDesktop.txt')) {
+                if ($mode -eq 'self-contained' -and -not $noticeText.Contains($name)) { throw "Embedded runtime notice missing: $name" }
+                if ($mode -eq 'small' -and $noticeText.Contains($name)) { throw 'Small build contains stale runtime notices.' }
+            }
+            [IO.File]::WriteAllText((Join-Path $logRoot "licenses-$mode.txt"), $noticeText, [Text.UTF8Encoding]::new($false))
+        } finally { $noticeProcess.Dispose() }
+
     }
 
     if ($RunTests) {
@@ -90,42 +109,11 @@ try {
         New-Item -ItemType Directory -Force -Path $packageRoot | Out-Null
         $checksums = @()
         foreach ($mode in $modes) {
-            # Include known deliverables only, avoiding arbitrary leftovers in
-            # a publish folder. A fresh staging directory needs no cleanup.
-            $stageName = "$Version-$mode-" + [guid]::NewGuid().ToString('N')
-            $stage = Join-Path $artifactRoot "staging\$stageName"
-            New-Item -ItemType Directory -Path $stage | Out-Null
-            Copy-Item -LiteralPath (Join-Path $artifactRoot "$mode\SteamGameBridge.exe") -Destination $stage
-            foreach ($document in @('LICENSE')) {
-                if (-not (Test-Path -LiteralPath $document -PathType Leaf)) { throw "Required package document missing: $document" }
-                Copy-Item -LiteralPath $document -Destination $stage
-            }
-            if ($mode -eq 'self-contained') {
-                # Read the actually resolved framework versions/package root,
-                # rather than guessing the SDK's current runtime patch level.
-                $runtimeConfig = Get-Content -LiteralPath 'src\SteamGameBridge.App\bin\Release\net10.0-windows\win-x64\SteamGameBridge.runtimeconfig.json' -Raw -Encoding UTF8 | ConvertFrom-Json
-                $restoreAssets = Get-Content -LiteralPath 'src\SteamGameBridge.App\obj\project.assets.json' -Raw -Encoding UTF8 | ConvertFrom-Json
-                $packagesRoot = [string]$restoreAssets.project.restore.packagesPath
-                $coreVersion = @($runtimeConfig.runtimeOptions.includedFrameworks | Where-Object name -eq 'Microsoft.NETCore.App')[0].version
-                $desktopVersion = @($runtimeConfig.runtimeOptions.includedFrameworks | Where-Object name -eq 'Microsoft.WindowsDesktop.App')[0].version
-                $thirdParty = Join-Path $stage 'third-party'
-                New-Item -ItemType Directory -Path $thirdParty | Out-Null
-                $notices = @(
-                    @{ Source = "microsoft.netcore.app.runtime.win-x64\$coreVersion\LICENSE.TXT"; Target = 'DOTNET-RUNTIME-LICENSE.txt' },
-                    @{ Source = "microsoft.netcore.app.runtime.win-x64\$coreVersion\THIRD-PARTY-NOTICES.TXT"; Target = 'DOTNET-RUNTIME-THIRD-PARTY-NOTICES.txt' },
-                    @{ Source = "microsoft.windowsdesktop.app.runtime.win-x64\$desktopVersion\LICENSE"; Target = 'DOTNET-DESKTOP-LICENSE.txt' }
-                )
-                foreach ($notice in $notices) {
-                    $noticePath = Join-Path $packagesRoot $notice.Source
-                    if (-not (Test-Path -LiteralPath $noticePath -PathType Leaf)) { throw "Runtime redistribution notice missing: $($notice.Source)" }
-                    Copy-Item -LiteralPath $noticePath -Destination (Join-Path $thirdParty $notice.Target)
-                }
-            }
-            $archiveName = "SteamGameBridge-$Version-win-x64-$mode.zip"
-            $archive = Join-Path $packageRoot $archiveName
-            Compress-Archive -LiteralPath @(Get-ChildItem -LiteralPath $stage -Force | ForEach-Object FullName) -DestinationPath $archive -CompressionLevel Optimal -Force
-            $hash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
-            $checksums += "$hash  $archiveName"
+            $fileName = if ($mode -eq 'small') { 'SteamGameBridge-small.exe' } else { 'SteamGameBridge.exe' }
+            $target = Join-Path $packageRoot $fileName
+            Copy-Item -LiteralPath (Join-Path $artifactRoot "$mode\SteamGameBridge.exe") -Destination $target -Force
+            $hash = (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash.ToLowerInvariant()
+            $checksums += "$hash  $fileName"
         }
         [IO.File]::WriteAllLines((Join-Path $packageRoot 'SHA256SUMS.txt'), $checksums, [Text.UTF8Encoding]::new($false))
         Write-Host "Packages and SHA256SUMS.txt: $packageRoot"
