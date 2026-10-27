@@ -82,7 +82,7 @@ jobs:
           $tag = $env:RELEASE_TAG
           if ($tag -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$') { throw 'Invalid release tag.' }
           $isPrerelease = $tag.Contains('-')
-          $releaseFlags = if ($isPrerelease) { @('--prerelease') } else { @('--latest') }
+          [string[]]$releaseFlags = if ($isPrerelease) { @('--prerelease') } else { @('--latest') }
           $assets = @(Get-ChildItem -LiteralPath packages -File | Where-Object { $_.Name.EndsWith('.zip') -or $_.Name -eq 'SHA256SUMS.txt' } | ForEach-Object FullName)
           if ($assets.Count -ne 3) { throw 'Expected the two tested ZIP variants and SHA256SUMS.txt.' }
           $checksums = @(Get-Content -LiteralPath packages/SHA256SUMS.txt)
