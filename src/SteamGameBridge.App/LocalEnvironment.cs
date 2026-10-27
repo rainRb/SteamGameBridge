@@ -47,10 +47,10 @@ internal static class LocalEnvironment
         }
     }
 
-    internal static (string Helper, string Placeholder) PlanTools(string state)
+    internal static (string Helper, string Placeholder) PlanTools(string state, string? source = null)
     {
-        string source = Environment.ProcessPath ?? throw new IOException("无法定位当前工具。");
-        if (!Path.GetFileName(source).Equals("SteamGameBridge.exe", StringComparison.OrdinalIgnoreCase)) throw new IOException("请直接运行已发布的 SteamGameBridge.exe。");
+        source ??= Environment.ProcessPath ?? throw new IOException("无法定位当前工具。");
+        if (!new[] { "SteamGameBridge.exe", "SteamGameBridge-small.exe" }.Contains(Path.GetFileName(source), StringComparer.OrdinalIgnoreCase)) throw new IOException("请直接运行已发布的 SteamGameBridge.exe。");
         string version = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(source)))[..16].ToLowerInvariant();
         string directory = Path.Combine(state, "bin", version); GuardPath(directory);
         return (Path.Combine(directory, "SteamGameBridge.exe"), Path.Combine(directory, "SteamPlaceholder.exe"));

@@ -7,7 +7,7 @@
     <Nullable>enable</Nullable>
     <AssemblyName>SteamGameBridge</AssemblyName>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <Version>0.2.0</Version>
+    <Version>0.2.1</Version>
     <PublishSingleFile>true</PublishSingleFile>
     <SelfContained>true</SelfContained>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
@@ -17,5 +17,16 @@
   <ItemGroup>
     <ProjectReference Include="../SteamGameBridge.Core/SteamGameBridge.Core.csproj" />
     <EmbeddedResource Include="../../assets/SteamPlaceholder.exe" LogicalName="SteamPlaceholder.exe" />
+    <EmbeddedResource Include="../../LICENSE" LogicalName="Licenses.Project.txt" />
   </ItemGroup>
+  <Target Name="EmbedRuntimeLicenses" BeforeTargets="AssignTargetPaths" DependsOnTargets="ResolveFrameworkReferences" Condition="'$(SelfContained)' == 'true'">
+    <ItemGroup>
+      <_CoreLicensePack Include="@(ResolvedRuntimePack)" Condition="'%(ResolvedRuntimePack.FrameworkName)' == 'Microsoft.NETCore.App'" />
+      <_DesktopLicensePack Include="@(ResolvedRuntimePack)" Condition="'%(ResolvedRuntimePack.FrameworkName)' == 'Microsoft.WindowsDesktop.App'" />
+      <EmbeddedResource Include="@(_CoreLicensePack->'%(PackageDirectory)/LICENSE.TXT')" LogicalName="Licenses.NETCore.txt" />
+      <EmbeddedResource Include="@(_CoreLicensePack->'%(PackageDirectory)/THIRD-PARTY-NOTICES.TXT')" LogicalName="Licenses.NETCore.ThirdParty.txt" />
+      <EmbeddedResource Include="@(_DesktopLicensePack->'%(PackageDirectory)/LICENSE')" LogicalName="Licenses.WindowsDesktop.txt" />
+    </ItemGroup>
+    <Error Condition="'@(_CoreLicensePack)' == '' Or '@(_DesktopLicensePack)' == ''" Text="Runtime license packs were not resolved." />
+  </Target>
 </Project>

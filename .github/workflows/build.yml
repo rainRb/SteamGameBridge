@@ -40,7 +40,7 @@ jobs:
         with:
           name: SteamGameBridge-windows-x64
           path: |
-            artifacts/packages/*.zip
+            artifacts/packages/*.exe
             artifacts/packages/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 30
@@ -83,12 +83,12 @@ jobs:
           if ($tag -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$') { throw 'Invalid release tag.' }
           $isPrerelease = $tag.Contains('-')
           [string[]]$releaseFlags = if ($isPrerelease) { @('--prerelease') } else { @('--latest') }
-          $assets = @(Get-ChildItem -LiteralPath packages -File | Where-Object { $_.Name.EndsWith('.zip') -or $_.Name -eq 'SHA256SUMS.txt' } | ForEach-Object FullName)
-          if ($assets.Count -ne 3) { throw 'Expected the two tested ZIP variants and SHA256SUMS.txt.' }
+          $assets = @(Get-ChildItem -LiteralPath packages -File | Where-Object { $_.Name.EndsWith('.exe') } | ForEach-Object FullName)
+          if ($assets.Count -ne 2) { throw 'Expected the two tested executable variants.' }
           $checksums = @(Get-Content -LiteralPath packages/SHA256SUMS.txt)
-          if ($checksums.Count -ne 2) { throw 'Expected one checksum for each ZIP variant.' }
+          if ($checksums.Count -ne 2) { throw 'Expected one checksum for each executable variant.' }
           foreach ($line in $checksums) {
-            if ($line -notmatch '^([a-f0-9]{64})  (SteamGameBridge-[A-Za-z0-9.-]+\.zip)$') { throw 'Invalid checksum file format.' }
+            if ($line -notmatch '^([a-f0-9]{64})  (SteamGameBridge(?:-small)?\.exe)$') { throw 'Invalid checksum file format.' }
             $expected = $Matches[1]
             $package = Join-Path packages $Matches[2]
             if ((Get-FileHash -LiteralPath $package -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expected) { throw 'A downloaded package failed SHA256 verification.' }
@@ -107,4 +107,4 @@ jobs:
           $published = & gh release view $tag --json isPrerelease,isDraft,tagName,assets
           if ($LASTEXITCODE -ne 0) { throw 'Could not verify the published release.' }
           $published = $published | ConvertFrom-Json
-          if ($published.isDraft -or $published.isPrerelease -ne $isPrerelease -or $published.tagName -ne $tag -or $published.assets.Count -ne 3) { throw 'Published release does not match the tested packages.' }
+          if ($published.isDraft -or $published.isPrerelease -ne $isPrerelease -or $published.tagName -ne $tag -or $published.assets.Count -ne 2) { throw 'Published release does not match the tested packages.' }

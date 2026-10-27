@@ -87,6 +87,15 @@ internal static class Program
 
     private static void StorageAndInstallChecks()
     {
+        Assert(LicenseDialog.ReadNotices().Contains("MIT License"), "project license can be read from embedded resources");
+        string names = Path.Combine(Fixture, "published-names"); Directory.CreateDirectory(names);
+        foreach (string name in new[] { "SteamGameBridge.exe", "SteamGameBridge-small.exe" })
+        {
+            string exe = Path.Combine(names, name); File.WriteAllBytes(exe, [77, 90, 0]);
+            string state = Path.Combine(names, "Data"); var plan = LocalEnvironment.PlanTools(state, exe);
+            Assert(Path.GetFileName(plan.Helper) == "SteamGameBridge.exe" && !Directory.Exists(state), "published filename plans without writing: " + name);
+        }
+
         string parent = Path.Combine(Fixture, "location-choice"); int confirmed = 0;
         using (var chooser = new DataLocationDialog(parent, _ => { confirmed++; return Task.CompletedTask; }, () => false))
         {
