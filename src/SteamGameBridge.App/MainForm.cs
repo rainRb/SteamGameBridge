@@ -25,6 +25,9 @@ internal sealed class MainForm : Form
     private readonly Label _feedback = new() { AutoEllipsis = true, Dock = DockStyle.Fill, ForeColor = UiTheme.Muted, Tag = ThemeTone.Muted };
     private readonly Label _emptyProfiles = new() { Text = "保存配置后，游戏会显示在这里", TextAlign = ContentAlignment.MiddleCenter, Dock = DockStyle.Fill, ForeColor = UiTheme.Muted, Tag = ThemeTone.Muted };
     private Control _launcherSection = null!, _starwardSection = null!;
+    private TableLayoutPanel _localSection = null!;
+    private int _argumentsRow, _waitRow;
+    private CancellationTokenSource? _searchCancellation;
     private readonly List<Button> _actions = [];
     private readonly List<Control> _editors = [];
     private readonly System.Windows.Forms.Timer _timer = new() { Interval = 10000 };
@@ -62,6 +65,7 @@ internal sealed class MainForm : Form
         _tray.DoubleClick += (_, _) => { Show(); WindowState = FormWindowState.Normal; Activate(); };
         FormClosing += (_, e) =>
         {
+            _searchCancellation?.Cancel();
             if (!_exit && !_demo && e.CloseReason == CloseReason.UserClosing && _store.Load().Any(p => p.Maintain))
             { e.Cancel = true; Hide(); _tray.Visible = true; _tray.ShowBalloonTip(3000, "工具仍在托盘运行", "仅在 Steam 和对应游戏退出后维护。可在托盘菜单中完全退出。", ToolTipIcon.Info); }
         };
@@ -72,7 +76,7 @@ internal sealed class MainForm : Form
     }
     protected override void Dispose(bool disposing)
     {
-        if (disposing) { _themeBinding?.Dispose(); _timer.Dispose(); _tray.Dispose(); }
+        if (disposing) { _searchCancellation?.Cancel(); _themeBinding?.Dispose(); _timer.Dispose(); _tray.Dispose(); }
         base.Dispose(disposing);
     }
 
@@ -129,7 +133,7 @@ internal sealed class MainForm : Form
             tab.FlatAppearance.BorderSize = 0; tab.Click += (_, _) => ShowPage(key); navigation.Controls.Add(tab); _navigation.Add(key, tab);
             return page;
         }
-        var settings = Page("GameSettings", "游戏设置"); var steam = Page("SteamSettings", "Steam 设置"); var integrations = Page("Integrations", "时长与维护");
+        var settings = Page("GameSettings", "游戏设置"); var steam = Page("SteamSettings", "Steam 设置"); var integrations = Page("Integrations", "维护");
         var logs = Page("Logs", "运行日志"); var help = Page("Help", "使用说明");
         TableLayoutPanel Content(Panel page)
         {
@@ -140,13 +144,13 @@ internal sealed class MainForm : Form
         TableLayoutPanel Section(TableLayoutPanel content, string title)
         {
             var section = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 3, Padding = new Padding(0, 4, 0, 14), Margin = new Padding(0, 0, 0, 10), RowCount = 1 };
-            section.ColumnStyles.Add(new(SizeType.AutoSize)); section.ColumnStyles.Add(new(SizeType.Percent, 100)); section.ColumnStyles.Add(new(SizeType.Absolute, 82));
+            section.ColumnStyles.Add(new(SizeType.AutoSize)); section.ColumnStyles.Add(new(SizeType.Percent, 100)); section.ColumnStyles.Add(new(SizeType.AutoSize));
             section.RowStyles.Add(new(SizeType.Absolute, 34));
             var label = new Label { Text = title, Font = new Font(Font, FontStyle.Bold), AutoSize = true, Margin = new Padding(0, 4, 0, 0) };
             section.Controls.Add(label, 0, 0); section.SetColumnSpan(label, 3);
             content.Controls.Add(section); return section;
         }
-        void Row(TableLayoutPanel section, string caption, Control value, Button? browse = null)
+        void Row(TableLayoutPanel section, string caption, Control value, Control? browse = null)
         {
             int row = section.RowCount++; section.RowStyles.Add(new(SizeType.Absolute, 42));
             section.Controls.Add(new Label { Text = caption, ForeColor = UiTheme.Muted, Tag = ThemeTone.Muted, AutoSize = true, MinimumSize = new Size(146, 0), Anchor = AnchorStyles.Left, Margin = new Padding(0, 0, 14, 0) }, 0, row);
@@ -160,11 +164,16 @@ internal sealed class MainForm : Form
             else { using var d = new OpenFileDialog { Filter = "EXE 程序|*.exe" }; if (d.ShowDialog(this) == DialogResult.OK) box.Text = d.FileName; }
         }));
         var identity = Section(gameContent, "游戏信息"); Row(identity, "配置名称", _name); Row(identity, "本地游戏预设", _preset); Row(identity, "Steam AppID", _appId);
-        var local = Section(gameContent, "本地启动"); Row(local, "实际游戏 EXE", _game, Picker(_game)); Row(local, "启动方式", _mode); Row(local, "游戏参数", _gameArgs);
+        var local = Section(gameContent, "本地启动"); _localSection = local;
+        var gameButtons = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Anchor = AnchorStyles.Left, Margin = Padding.Empty };
+        gameButtons.Controls.Add(Action("自动检索", AutoSearchAsync)); gameButtons.Controls.Add(Picker(_game));
+        Row(local, "实际游戏 EXE", _game, gameButtons); Row(local, "启动方式", _mode);
+        Row(local, "游戏参数", _gameArgs); _argumentsRow = local.RowCount - 1;
+        Row(local, "等待游戏（秒）", _wait); _waitRow = local.RowCount - 1;
         var launcher = Section(gameContent, "启动器选项"); _launcherSection = launcher;
-        Row(launcher, "启动器 / 包装器", _launcher, Picker(_launcher)); Row(launcher, "启动器参数模板", _template); Row(launcher, "等待游戏（秒）", _wait);
+        Row(launcher, "启动器 / 包装器", _launcher, Picker(_launcher)); Row(launcher, "启动器参数模板", _template);
         var binding = Section(steamContent, "Steam 账号与游戏库"); Row(binding, "Steam 安装目录", _steam, Picker(_steam, true)); Row(binding, "游戏库", _libraries); Row(binding, "目标 Steam 账号", _accounts); Row(binding, "Steam 启动入口", _entries);
-        var starward = Section(integrationContent, "Starward"); _starwardSection = starward;
+        var starward = Section(gameContent, "Starward"); _starwardSection = starward;
         Row(starward, "Starward 计时", _starward); Row(starward, "Starward EXE（可选）", _starwardExe, Picker(_starwardExe)); Row(starward, "计时接口状态", _starwardStatus);
         var maintenance = Section(integrationContent, "维护"); Row(maintenance, "自动维护", _maintenance);
         var evidence = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 4, Margin = Padding.Empty };
@@ -196,11 +205,11 @@ internal sealed class MainForm : Form
         detail.Controls.Add(right); split.Panel2.Controls.Add(detail); root.Controls.Add(split, 0, 1);
         _status.ForeColor = UiTheme.Muted; _status.Tag = ThemeTone.Muted; _status.TextAlign = ContentAlignment.MiddleLeft; _status.Margin = new Padding(3, 4, 0, 0); root.Controls.Add(_status, 0, 2); Controls.Add(root);
         ShowPage("GameSettings");
-        _preset.Items.AddRange(GamePreset.All.Cast<object>().ToArray()); _mode.Items.AddRange(["直接启动游戏", "官方启动器", "已有第三方包装器"]);
+        _preset.Items.AddRange(GamePreset.All.Cast<object>().ToArray()); SetLaunchMode(LaunchMode.Direct);
         _profiles.SelectedIndexChanged += (_, _) => { if (!_loading && !_working && _profiles.SelectedItem is GameProfile p) LoadProfile(p); };
-        _preset.SelectedIndexChanged += (_, _) => { if (_loading) return; var p = SelectedPreset; if (_name.Text == "新游戏" || GamePreset.All.Any(x => x.Name == _name.Text)) _name.Text = p.Name; _appId.Text = p.AppId; _mode.SelectedIndex = (int)p.DefaultMode; _starward.Checked = p.StarwardBiz is not null && _protocolAvailable(); RefreshLocks(); };
+        _preset.SelectedIndexChanged += (_, _) => { if (_loading) return; var p = SelectedPreset; if (_name.Text == "新游戏" || GamePreset.All.Any(x => x.Name == _name.Text)) _name.Text = p.Name; _appId.Text = p.AppId; SetLaunchMode(p.DefaultMode); _starward.Checked = p.StarwardBiz is not null && _protocolAvailable(); RefreshLocks(); };
         _name.TextChanged += (_, _) => { if (!_loading) _profileTitle.Text = string.IsNullOrWhiteSpace(_name.Text) ? "新游戏配置" : _name.Text; };
-        _mode.SelectedIndexChanged += (_, _) => UpdateSections();
+        _mode.SelectedIndexChanged += (_, _) => { UpdateSections(); UpdateStarwardState(); };
         _starward.CheckedChanged += (_, _) => { if (!_loading) UpdateStarwardState(); };
         _entries.SelectedIndexChanged += (_, _) => { if (!_loading && _json is not null) { try { ParseSelectedMetadata(); UpdatePreview(); } catch (Exception ex) { Log(ex.Message); } } };
         _maintenance.CheckedChanged += (_, _) =>
@@ -228,10 +237,61 @@ internal sealed class MainForm : Form
             item.Value.ForeColor = selected ? UiTheme.SelectionInk : UiTheme.Muted;
         }
     }
+    private void SetLaunchMode(LaunchMode selected)
+    {
+        _mode.BeginUpdate();
+        try
+        {
+            _mode.Items.Clear(); _mode.Items.AddRange(["直接启动游戏", "官方启动器", "已有第三方包装器"]);
+            if (SelectedPreset.StarwardBiz is not null) _mode.Items.Add("使用 Starward 启动");
+            _mode.SelectedIndex = (int)selected < _mode.Items.Count ? (int)selected : 0;
+        }
+        finally { _mode.EndUpdate(); }
+    }
     private void UpdateSections()
     {
-        _launcherSection.Visible = _mode.SelectedIndex > 0;
+        var mode = (LaunchMode)_mode.SelectedIndex;
+        _launcherSection.Visible = mode is LaunchMode.OfficialLauncher or LaunchMode.ExistingWrapper;
         _starwardSection.Visible = SelectedPreset.StarwardBiz is not null;
+        SetRowVisible(_localSection, _argumentsRow, mode != LaunchMode.Starward);
+        SetRowVisible(_localSection, _waitRow, mode is LaunchMode.OfficialLauncher or LaunchMode.ExistingWrapper or LaunchMode.Starward);
+    }
+    private static void SetRowVisible(TableLayoutPanel section, int row, bool visible)
+    {
+        if (row >= section.RowStyles.Count) return;
+        foreach (Control control in section.Controls) if (section.GetRow(control) == row) control.Visible = visible;
+        section.RowStyles[row].Height = visible ? 42 : 0;
+    }
+    private async Task AutoSearchAsync()
+    {
+        if (_demo) throw new BridgeException("演示模式不检索本机目录。");
+        var preset = SelectedPreset;
+        var targets = GameFileSearch.TargetNames(preset.Id, _game.Text.Trim());
+        using var cancellation = new CancellationTokenSource(); _searchCancellation = cancellation;
+        _feedback.ForeColor = UiTheme.Muted; _feedback.Tag = ThemeTone.Muted; _feedback.Text = "正在检索…";
+        var libraries = _libraries.Items.Cast<string>().Select(path => Path.Combine(path, "steamapps", "common")).ToArray();
+        try
+        {
+            var result = await Task.Run(() => GameFileSearch.Find(GameSearchRoots.Get(preset).Concat(libraries), targets, preset.StarwardBiz is not null, preset.StarwardBiz, cancellation.Token));
+            if (IsDisposed || cancellation.IsCancellationRequested) return;
+            ApplySearchResult(result);
+        }
+        catch (OperationCanceledException) { if (!IsDisposed) _feedback.Text = "检索已取消。"; }
+        finally { _searchCancellation = null; }
+    }
+    private void ApplySearchResult(GameSearchResult result)
+    {
+        if (result.StarwardExecutables.Count == 1 && string.IsNullOrWhiteSpace(_starwardExe.Text)) _starwardExe.Text = result.StarwardExecutables[0];
+        if (result.Games.Count == 0) { _feedback.Text = "未找到游戏，请手动选择。"; return; }
+        string path;
+        if (result.Games.Count == 1) path = result.Games[0];
+        else
+        {
+            using var dialog = new GameSelectionDialog(result.Games, _themeBinding.ReadPreference);
+            if (dialog.ShowDialog(this) != DialogResult.OK) { _feedback.Text = ""; return; }
+            path = dialog.SelectedPath;
+        }
+        _game.Text = path; _feedback.Text = "已找到游戏。"; Log("检索结果：" + path);
     }
     private void PresentError(string message)
     {
@@ -251,7 +311,7 @@ internal sealed class MainForm : Form
     {
         _loading = true; _profiles.SelectedIndex = -1; _profileId = Guid.NewGuid().ToString("N");
         _name.Text = GamePreset.All[0].Name; _preset.SelectedIndex = 0; _appId.Text = SelectedPreset.AppId; _game.Clear(); _gameArgs.Clear(); _launcher.Clear(); _template.Clear(); _starwardExe.Clear();
-        _mode.SelectedIndex = (int)SelectedPreset.DefaultMode; _wait.Value = 180; _starward.Checked = false; _maintenance.Checked = true;
+        SetLaunchMode(SelectedPreset.DefaultMode); _wait.Value = 180; _starward.Checked = false; _maintenance.Checked = true;
         _metadata = null; _json = null; _entries.Items.Clear(); _mapping.Text = "请获取或导入元数据";
         if (!_demo) { try { _steam.Text = LocalEnvironment.SteamRoot(); LoadSteamChoices(); } catch (Exception ex) { Log(ex.Message + " 可手动选择 Steam 安装目录。"); } }
         _loading = false; UpdateStarwardState(); RefreshLocks();
@@ -279,7 +339,7 @@ internal sealed class MainForm : Form
         {
             _loading = true; _profileId = p.Id; _name.Text = p.Name; _appId.Text = p.AppId; _steam.Text = p.Request.SteamRoot;
             _preset.SelectedItem = GamePreset.Find(p.Request.PresetId); _game.Text = p.Request.NativeExe; _gameArgs.Text = p.Request.GameArguments;
-            _mode.SelectedIndex = (int)p.Request.LaunchMode; _launcher.Text = p.Request.LauncherExe; _template.Text = p.Request.LauncherArguments; _wait.Value = p.Request.WaitSeconds;
+            SetLaunchMode(p.Request.LaunchMode); _launcher.Text = p.Request.LauncherExe; _template.Text = p.Request.LauncherArguments; _wait.Value = p.Request.WaitSeconds;
             _starward.Checked = p.Request.Starward?.Enabled == true; _starwardExe.Text = p.Request.Starward?.Executable ?? ""; _maintenance.Checked = p.Maintain;
             LoadSteamChoices(p.Request.LibraryRoot, p.Request.AccountConfigPath);
             _json = null; _metadata = Service(p).ReadReceipt()?.Metadata; _entries.Items.Clear();
@@ -294,7 +354,7 @@ internal sealed class MainForm : Form
         SteamAppMetadata.ValidateAppId(_appId.Text.Trim());
         if (_libraries.SelectedItem is not string library || _accounts.SelectedItem is not AccountRow account) throw new BridgeException("请明确选择 Steam 游戏库及目标账号。");
         _tools ??= LocalEnvironment.StageTools(_state);
-        var request = new SetupRequest(_steam.Text.Trim(), library, account.Value.LocalConfigPath, _game.Text.Trim(), _tools.Value.Helper, _tools.Value.Placeholder, _gameArgs.Text)
+        var request = new SetupRequest(_steam.Text.Trim(), library, account.Value.LocalConfigPath, _game.Text.Trim(), _tools.Value.Helper, _tools.Value.Placeholder, (LaunchMode)_mode.SelectedIndex == LaunchMode.Starward ? "" : _gameArgs.Text)
         { PresetId = SelectedPreset.Id, LaunchMode = (LaunchMode)_mode.SelectedIndex, LauncherExe = _launcher.Text.Trim(), LauncherArguments = _template.Text, WaitSeconds = (int)_wait.Value,
             Starward = SelectedPreset.StarwardBiz is null ? null : new(_starward.Checked, string.IsNullOrWhiteSpace(_starwardExe.Text) ? null : _starwardExe.Text.Trim()) };
         LaunchConfiguration.Validate(request);
@@ -353,10 +413,11 @@ internal sealed class MainForm : Form
         RequireLive(); var p = CaptureProfile(); var m = _metadata ?? throw new BridgeException("请获取元数据并选择启动入口。"); var service = Service(p);
         var original = ValveKeyValues.ReadLaunchOptions(File.ReadAllText(p.Request.AccountConfigPath), p.AppId);
         var preview = service.Preview(p.Request, m);
-        using var dialog = new LaunchOptionsDialog(original.Value, p.Request.GameArguments, preview.LaunchOptions, _themeBinding.ReadPreference);
+        using var dialog = new LaunchOptionsDialog(original.Value, p.Request.GameArguments, preview.LaunchOptions, _themeBinding.ReadPreference, p.Request.LaunchMode != LaunchMode.Starward);
         if (dialog.ShowDialog(this) != DialogResult.OK) return Task.CompletedTask;
         if (dialog.SelectedAction == ExistingLaunchOptionsAction.Keep) { Log("已保留原设置，本次未接入。"); return Task.CompletedTask; }
         p.Request = p.Request with { GameArguments = dialog.GameArguments, ExistingOptionsAction = dialog.SelectedAction, OriginalOptionsReviewed = true, ExpectedOriginalLaunchOptions = original.Value };
+        LaunchConfiguration.Validate(p.Request);
         _store.Save(p); ReloadProfiles(p.Id);
         var result = service.Apply(p.Request, m); Log(result.Message); LoadProfile(p); _nextRepair[p.Id] = DateTimeOffset.MaxValue; return Task.CompletedTask;
     }
@@ -445,7 +506,8 @@ internal sealed class MainForm : Form
     private void UpdateStarwardState()
     {
         bool supported = SelectedPreset.StarwardBiz is not null;
-        string text = !supported ? "此预设不启用" : !_starward.Checked ? "已关闭 Starward 计时"
+        bool enabled = _starward.Checked || (LaunchMode)_mode.SelectedIndex == LaunchMode.Starward;
+        string text = !supported ? "此预设不启用" : !enabled ? "已关闭 Starward 计时"
             : _protocolAvailable() ? "协议可用" : "协议不可用；可指定 Starward EXE";
         if (!_demo && supported && _starward.Checked)
         {
@@ -489,7 +551,7 @@ internal sealed class MainForm : Form
         catch (UnauthorizedAccessException) { PresentError("访问被拒绝，请使用有权限的目录或以管理员身份打开。"); }
         catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode == 1223) { PresentError("已取消 Windows 授权。"); }
         catch (Exception ex) { PresentError(ex.Message); }
-        finally { _working = false; foreach (var a in _actions) a.Enabled = true; RefreshLocks(); UpdatePreview(); }
+        finally { _working = false; if (!IsDisposed) { foreach (var a in _actions) a.Enabled = true; RefreshLocks(); UpdatePreview(); } }
     }
     private void Log(string message) => _log.AppendText($"{DateTime.Now:HH:mm:ss}  {message}\r\n");
 }

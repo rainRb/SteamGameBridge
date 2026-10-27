@@ -186,6 +186,65 @@ foreach (var preset in GamePreset.All.Where(p => p.Id != "custom")) runner.Test(
     if (preset.Id == "endfield") Runner.Equal(2, entries.Count);
 });
 
+runner.Test("Starward mode preserves existing enum values", () => { Runner.Equal(0, (int)LaunchMode.Direct); Runner.Equal(1, (int)LaunchMode.OfficialLauncher); Runner.Equal(2, (int)LaunchMode.ExistingWrapper); Runner.Equal(3, (int)LaunchMode.Starward); });
+foreach (string id in new[] { "zzz", "hi3" }) runner.Test("Starward start URI uses selected local path: " + id, () =>
+{
+    using var f = new Fixture(Metadata(), original);
+    var request = f.Request with { PresetId = id, LaunchMode = LaunchMode.Starward };
+    LaunchConfiguration.Validate(request);
+    var uri = new Uri(LaunchConfiguration.BuildStarwardStartUri(request));
+    Runner.Equal("startgame", uri.Host); Runner.Equal("/" + GamePreset.Find(id).StarwardBiz, uri.AbsolutePath);
+    Runner.Equal(Path.GetDirectoryName(f.Native), Uri.UnescapeDataString(uri.Query.Split('=', 2)[1]));
+});
+runner.Test("Starward start rejects unsupported game and unsupported arguments", () =>
+{
+    using var f = new Fixture(Metadata(), original);
+    Runner.Throws(() => LaunchConfiguration.Validate(f.Request with { PresetId = "endfield", LaunchMode = LaunchMode.Starward }));
+    Runner.Throws(() => LaunchConfiguration.Validate(f.Request with { PresetId = "zzz", LaunchMode = LaunchMode.Starward, GameArguments = "--dx11" }));
+});
+runner.Test("Search finds executable in common game tree and companion program", () =>
+{
+    using var f = new Fixture(Metadata(), original);
+    string folder = Path.Combine(f.Root, "games", "米哈游", "绝区零"); Directory.CreateDirectory(folder);
+    string game = Path.Combine(folder, "ZenlessZoneZero.exe"); File.Copy(f.Native, game);
+    string programs = Path.Combine(f.Root, "Program Files", "Starward"); Directory.CreateDirectory(programs); File.Copy(f.Helper, Path.Combine(programs, "Starward.exe"));
+    var result = GameFileSearch.Find([Path.Combine(f.Root, "games"), Path.Combine(f.Root, "Program Files")], GameFileSearch.TargetNames("zzz"), true);
+    Runner.Equal(game, result.Games.Single()); Runner.Equal(Path.Combine(programs, "Starward.exe"), result.StarwardExecutables.Single());
+});
+runner.Test("Search ignores own placeholder installation, wrong region and non-EXE files", () =>
+{
+    using var f = new Fixture(Metadata(), original);
+    foreach (string name in new[] { "placeholder", "global", "text" }) Directory.CreateDirectory(Path.Combine(f.Root, "games", name));
+    string placeholder = Path.Combine(f.Root, "games", "placeholder"); File.Copy(f.Native, Path.Combine(placeholder, "ZenlessZoneZero.exe")); File.WriteAllText(Path.Combine(placeholder, ".steam-game-bridge-owner.json"), "{}");
+    string global = Path.Combine(f.Root, "games", "global"); File.Copy(f.Native, Path.Combine(global, "ZenlessZoneZero.exe")); File.WriteAllText(Path.Combine(global, "config.ini"), "game_biz=nap_global");
+    File.WriteAllText(Path.Combine(f.Root, "games", "text", "ZenlessZoneZero.exe"), "not executable");
+    Runner.Equal(0, GameFileSearch.Find([Path.Combine(f.Root, "games")], GameFileSearch.TargetNames("zzz"), gameBiz: "nap_cn").Games.Count);
+});
+runner.Test("Search returns all copies without choosing one", () =>
+{
+    using var f = new Fixture(Metadata(), original); string second = Path.Combine(f.Root, "another"); Directory.CreateDirectory(second); File.Copy(f.Native, Path.Combine(second, "ZenlessZoneZero.exe"));
+    Runner.Equal(2, GameFileSearch.Find([Path.GetDirectoryName(f.Native)!, second, second], GameFileSearch.TargetNames("zzz")).Games.Count);
+});
+runner.Test("Search respects depth, directory and time limits", () =>
+{
+    using var f = new Fixture(Metadata(), original);
+    Runner.Equal(0, GameFileSearch.Find([f.Root], GameFileSearch.TargetNames("zzz"), maxDepth: 0).Games.Count);
+    Runner.True(GameFileSearch.Find([f.Root], GameFileSearch.TargetNames("zzz"), maxDirectories: 1).Limited);
+    Runner.True(GameFileSearch.Find([f.Root], GameFileSearch.TargetNames("zzz"), timeLimit: TimeSpan.Zero).Limited);
+});
+runner.Test("Search skips directory junctions", () =>
+{
+    using var f = new Fixture(Metadata(), original); string root = Path.Combine(f.Root, "scan"); Directory.CreateDirectory(root); f.Junction(Path.Combine(root, "linked-game"), Path.GetDirectoryName(f.Native)!);
+    Runner.Equal(0, GameFileSearch.Find([root], GameFileSearch.TargetNames("zzz")).Games.Count);
+});
+runner.Test("Search cancellation and custom target names", () =>
+{
+    using var f = new Fixture(Metadata(), original); using var token = new CancellationTokenSource(); token.Cancel();
+    bool cancelled = false; try { GameFileSearch.Find([f.Root], GameFileSearch.TargetNames("zzz"), cancellation: token.Token); } catch (OperationCanceledException) { cancelled = true; }
+    Runner.True(cancelled); Runner.Equal("Custom.exe", GameFileSearch.TargetNames("custom", Path.Combine(f.Root, "Custom.exe")).Single());
+    Runner.Throws(() => GameFileSearch.TargetNames("custom"));
+});
+
 runner.Report();
 return runner.Failed == 0 ? 0 : 1;
 

@@ -54,14 +54,10 @@ internal static class NativeLauncher
             if (!nativeAcquired) throw new InvalidOperationException("已有此本地游戏的启动会话（可能来自其他 Steam AppID）。");
             if (GameProcessTracker.IsRunning(request.NativeExe)) throw new InvalidOperationException("所选本地游戏已经运行，请先退出再从 Steam 启动。");
             DateTime started = DateTime.UtcNow;
-            string exe = request.LaunchMode == LaunchMode.Direct ? request.NativeExe : request.LauncherExe;
-            var info = new ProcessStartInfo(exe) { UseShellExecute = false, WorkingDirectory = Path.GetDirectoryName(exe) };
-            var arguments = request.LaunchMode == LaunchMode.Direct ? WindowsArguments.Parse(request.GameArguments) : LaunchConfiguration.ExpandLauncherArguments(request, args[3..]);
-            foreach (string value in arguments) info.ArgumentList.Add(value);
-            Status("waiting", "等待确认实际游戏进程；启动器可正常显示，请在其中开始游戏。");
-            using Process launcher = Process.Start(info) ?? throw new IOException("程序未启动。");
+            using Process? launcher = Start(request, args[3..], transport ?? new WindowsStarwardTransport());
+            Status("waiting", request.LaunchMode == LaunchMode.Starward ? "已交给 Starward，等待游戏启动。" : "等待确认实际游戏进程。");
             using Process game = request.LaunchMode == LaunchMode.Direct
-                ? GameProcessTracker.ConfirmDirect(launcher.Id, request.NativeExe, started)
+                ? GameProcessTracker.ConfirmDirect(launcher!.Id, request.NativeExe, started)
                 : GameProcessTracker.WaitForGame(request.NativeExe, started, TimeSpan.FromSeconds(request.WaitSeconds));
             var identity = GameProcessTracker.Identity(game);
             var notifier = new StarwardNotifier(transport ?? new WindowsStarwardTransport());
@@ -84,9 +80,18 @@ internal static class NativeLauncher
         catch (Exception ex) { Status("failed", ex.Message); throw; }
         finally { if (nativeAcquired) nativeMutex.ReleaseMutex(); single.ReleaseMutex(); }
     }
+    private static Process? Start(SetupRequest request, IReadOnlyList<string> steamCommand, IStarwardTransport transport)
+    {
+        if (request.LaunchMode == LaunchMode.Starward) { StarwardLauncher.Start(request, transport); return null; }
+        string exe = request.LaunchMode == LaunchMode.Direct ? request.NativeExe : request.LauncherExe;
+        var info = new ProcessStartInfo(exe) { UseShellExecute = false, WorkingDirectory = Path.GetDirectoryName(exe) };
+        var arguments = request.LaunchMode == LaunchMode.Direct ? WindowsArguments.Parse(request.GameArguments) : LaunchConfiguration.ExpandLauncherArguments(request, steamCommand);
+        foreach (string value in arguments) info.ArgumentList.Add(value);
+        return Process.Start(info) ?? throw new IOException("程序未启动。");
+    }
     private static void ValidateStarwardIdentity(SetupRequest request)
     {
-        if (request.Starward?.Enabled != true) return;
+        if (request.Starward?.Enabled != true && request.LaunchMode != LaunchMode.Starward) return;
         string? expected = request.PresetId switch { "zzz" => "ZenlessZoneZero.exe", "hi3" => "BH3.exe", _ => null };
         if (expected is null || !Path.GetFileName(request.NativeExe).Equals(expected, StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("Starward 需要对应国服的实际游戏 EXE，请检查本地预设和路径。");
