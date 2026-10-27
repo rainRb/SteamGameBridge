@@ -1,4 +1,4 @@
-name: Windows build and experimental release
+name: Windows build and release
 
 on:
   push:
@@ -35,7 +35,7 @@ jobs:
           } else {
             ./Build.ps1 -All -RunTests -Package
           }
-      - name: Upload experimental packages
+      - name: Upload Windows packages
         uses: actions/upload-artifact@v4
         with:
           name: SteamGameBridge-windows-x64
@@ -55,7 +55,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
-  prerelease:
+  release:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     needs: build
     runs-on: windows-latest
@@ -71,7 +71,7 @@ jobs:
         with:
           name: SteamGameBridge-windows-x64
           path: packages
-      - name: Create or update GitHub prerelease
+      - name: Publish GitHub release
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -80,6 +80,9 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $tag = $env:RELEASE_TAG
+          if ($tag -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$') { throw 'Invalid release tag.' }
+          $isPrerelease = $tag.Contains('-')
+          $releaseFlags = if ($isPrerelease) { @('--prerelease') } else { @('--latest') }
           $assets = @(Get-ChildItem -LiteralPath packages -File | Where-Object { $_.Name.EndsWith('.zip') -or $_.Name -eq 'SHA256SUMS.txt' } | ForEach-Object FullName)
           if ($assets.Count -ne 3) { throw 'Expected the two tested ZIP variants and SHA256SUMS.txt.' }
           $checksums = @(Get-Content -LiteralPath packages/SHA256SUMS.txt)
@@ -93,11 +96,15 @@ jobs:
           if (-not (Test-Path -LiteralPath docs/ReleaseNotes.md -PathType Leaf)) { throw 'Release notes are missing.' }
           $existing = & gh release view $tag --json isPrerelease 2>$null
           if ($LASTEXITCODE -eq 0) {
-            if (-not ($existing | ConvertFrom-Json).isPrerelease) { throw 'An existing stable release will not be changed or overwritten.' }
+            if (-not $isPrerelease -or -not ($existing | ConvertFrom-Json).isPrerelease) { throw 'An existing stable release will not be changed or overwritten.' }
             & gh release edit $tag --prerelease --title "SteamGameBridge $tag" --notes-file docs/ReleaseNotes.md
             if ($LASTEXITCODE -ne 0) { throw 'Could not update the prerelease notes.' }
             & gh release upload $tag @assets --clobber
           } else {
-            & gh release create $tag @assets --verify-tag --prerelease --title "SteamGameBridge $tag" --notes-file docs/ReleaseNotes.md
+            & gh release create $tag @assets --verify-tag @releaseFlags --title "SteamGameBridge $tag" --notes-file docs/ReleaseNotes.md
           }
-          if ($LASTEXITCODE -ne 0) { throw 'GitHub prerelease publication failed.' }
+          if ($LASTEXITCODE -ne 0) { throw 'GitHub release publication failed.' }
+          $published = & gh release view $tag --json isPrerelease,isDraft,tagName,assets
+          if ($LASTEXITCODE -ne 0) { throw 'Could not verify the published release.' }
+          $published = $published | ConvertFrom-Json
+          if ($published.isDraft -or $published.isPrerelease -ne $isPrerelease -or $published.tagName -ne $tag -or $published.assets.Count -ne 3) { throw 'Published release does not match the tested packages.' }
