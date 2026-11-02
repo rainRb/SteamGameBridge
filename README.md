@@ -3,7 +3,11 @@
 [![Windows build](https://github.com/rainRb/SteamGameBridge/actions/workflows/build.yml/badge.svg)](https://github.com/rainRb/SteamGameBridge/actions/workflows/build.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-把已经安装的本地游戏接入 **Steam 正式游戏条目**的独立 Windows 工具。可以同时管理多个游戏，选择内置预设或手动输入 Steam AppID；也可以让绝区零、崩坏3把实际游戏进程交给 Starward 记录时长。
+通过 Steam 正式游戏条目启动已经安装的本地游戏。支持终末地、绝区零、鸣潮、崩坏3，也可以手动添加其他游戏；绝区零和崩坏3支持与 Starward 联动。
+
+## 下载
+
+从 [Releases](https://github.com/rainRb/SteamGameBridge/releases/latest) 下载。`SteamGameBridge.exe` 可直接运行；`SteamGameBridge-small.exe` 需要安装 .NET 10 Desktop Runtime x64。
 
 ## 预设与自定义 AppID
 
@@ -17,7 +21,7 @@
 
 **本地游戏预设与 Steam AppID 分开保存。** 选择预设会填入默认 ID，之后仍可修改。获取元数据后，界面显示 Steam 真实名称及本地映射。
 
-自定义 AppID 必须有可用的公开 Windows EXE、安装目录、公共分支 BuildID 和 Depot Manifest 元数据。多个 Windows 入口必须明确选择；信息缺失、路径异常或已有未知安装时停止。选中的入口决定占位程序路径。
+自定义 AppID 需要有可用的 Windows 启动入口和安装元数据。获取元数据后，如果有多个启动入口，请选择对应的入口。
 
 ## 环境与准备
 
@@ -27,23 +31,21 @@
 - `small` 轻量版需要 .NET 10 Desktop Runtime x64；`self-contained` 版内置运行时，功能相同。
 - 接入、修复或恢复前完全退出 Steam 及对应游戏。工具不会自动结束这些进程。
 
-首次打开的新列表为空。新增游戏后，选择实际游戏 EXE、Steam 安装位置、游戏库和目标账号。没有唯一最近账号时，必须手动选择。Steam 路径发现失败时可自行选择安装目录。
+首次运行时选择数据保存位置，默认在程序所在目录创建 `SteamGameBridge.Data` 文件夹。新增游戏后，可点击“自动检索”查找游戏，也可以手动选择游戏 EXE、Steam 安装位置、游戏库和目标账号。
 
 如果创建游戏进程需要管理员权限，先完全退出 Steam，再手动正常提权打开 Steam。
 
 ## 接入步骤
 
-1. 点击“新增游戏”，填写配置名称并选择本地预设。需要时修改 Steam AppID。
-2. 核对 Steam 安装位置，选择游戏库及目标账号；实际游戏 EXE 必须指向本地客户端，而不是启动器。
-3. 配置以下三种启动方式之一，填写本地游戏参数。
-4. “获取元数据”，或导入同格式的 Steam app-info JSON。多个入口时，在“Steam 启动入口”中明确选择。数据来自第三方公开镜像 `https://api.steamcmd.net/v1/info/<AppID>`。
-5. 在“接入预览与运行日志”核对正式条目名称、实际游戏路径、清单位置及预计启动项。
-6. 完全退出 Steam，点击“一键接入”，在确认窗口选择如何处理原启动项并核对最终游戏参数。工具会备份原值。
-7. 正常打开 Steam、登录相同账号，从正式游戏条目启动；也可以点击工具中的“从 Steam 启动”。
+1. 点击“新增”，填写配置名称并选择游戏预设；需要时修改 Steam AppID。
+2. 选择实际游戏 EXE 和启动方式，再在“Steam 设置”中核对 Steam 安装位置、游戏库及目标账号。
+3. 点击“获取元数据”，有多个 Steam 启动入口时选择对应的入口。也可以导入同格式的 Steam app-info JSON。
+4. 完全退出 Steam，点击“一键接入”，按提示处理已有安装和启动项。
+5. 打开 Steam 并登录所选账号，从游戏库启动；也可以点击工具中的“从 Steam 启动”。
 
 游戏设置可先保存，稍后接入。已接入的配置锁定路径、AppID、参数和账号；要修改先恢复，再重新接入。列表中的游戏各自保存备份、维护和恢复状态。同一 Steam 安装与 AppID 只能有一份配置。
 
-## 三种启动方式
+## 启动方式
 
 ### 直接启动游戏
 
@@ -84,6 +86,9 @@
 "<稳定工具目录>\SteamGameBridge.exe" --profile "<该游戏状态目录>\launch.json" --steam-command %command%
 ```
 
+### 使用 Starward 启动
+
+绝区零和崩坏3可以选择“使用 Starward 启动”。在 Starward 中设置好对应游戏后，选择实际游戏 EXE；游戏参数在 Starward 中设置。
 
 ## 原启动项的三个选择
 
@@ -97,20 +102,20 @@
 
 如果原值含完整 EXE 命令、命令链、`%command%` 或不完整引号，不会自动把整段塞入游戏参数；需要在确认窗口里仅填写想保留的参数。后两项都备份原值，恢复时可找回。
 
-确认后原启动项又发生改变时停止接入。即便选择“完全替换”，仍不会接管已有 Steam 安装、清理未知目录或覆盖别人的清单。
+如果 Steam 中已有安装，工具会先显示清单、安装目录和识别结果。已确认归属的占位安装可以重新接入；其他安装需要确认删除后才能继续。请仔细核对显示的路径和文件大小。
 
 ## Starward 时长
 
 为 **绝区零** 和 **崩坏3** 预设提供“使用 Starward 记录时长”开关。已注册协议可用时，选择预设默认勾选；可手动关闭。没有注册协议时，可以指定现有 Starward EXE。
 
-流程是：**Steam → 本工具 → 本地游戏 → 确认真实 PID → 通知 Starward**。协议用于交接进程，不是启动游戏：
+启用时长联动后，游戏启动时会把实际游戏进程交给 Starward：
 
 ```text
 starward://playtime/nap_cn?pid=<真实游戏PID>
 starward://playtime/bh3_cn?pid=<真实游戏PID>
 ```
 
-优先调用注册协议；未注册时，将同一 URI 作为一个参数传给所选 Starward EXE。不会调用 `startgame` 重复启动游戏。检查实际游戏 EXE 与本地地区标识，不能把包装器 PID 交过去。
+选择“使用 Starward 启动”时，工具通过 Starward 启动游戏，并把游戏进程交给 Starward 记录时长。其他启动方式也可以单独开启 Starward 计时。
 
 同一 PID 与创建时间仅尝试通知一次；Starward 仍有自己的 PID 去重机制。协议缺失、EXE 失效或发送失败时，继续等待游戏正常退出，不结束游戏、不无限重试。
 
@@ -118,16 +123,7 @@ starward://playtime/bh3_cn?pid=<真实游戏PID>
 
 ## 维护与恢复
 
-配置、启动组件和备份保存于：
-
-```text
-%LOCALAPPDATA%\SteamGameBridge
-  profiles.json                         游戏配置列表
-  bin\<工具哈希>\                       稳定启动组件
-  integrations\<Steam安装标识>-<AppID>\  各游戏清单归属、启动配置、状态和备份
-```
-
-未恢复接入前不要删除状态目录。不同游戏使用独立记录；修改共享 Steam 账号配置时按 Steam 安装位置串行加锁，避免丢失另一款游戏的更新。
+配置、启动组件和备份保存在首次运行时选择的 `SteamGameBridge.Data` 文件夹中。可以在“更多操作 → 数据目录”查看或修改位置；修改前需要恢复所有已接入的游戏。
 
 开启维护后，工具仍在运行时，会在 Steam 和对应游戏退出后重新获取元数据，修复自己的缺失清单、占位文件和缺失/空启动项。关闭窗口可收至托盘，托盘退出后停止维护；没有开机自启或计划任务。临时失败至少间隔五分钟重试。用户改写的非空启动项、未知文件或 Steam 下载状态不会被自动覆盖。
 
